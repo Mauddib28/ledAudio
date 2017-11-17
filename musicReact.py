@@ -49,7 +49,7 @@ BLUE_PIN  = 24
 # Number of color changes per step (more is faster, less is slower).
 # You also can use 0.X floats.
 STEPS     	= 50
-BRIGHT_STEPS	= 1	# Original code default is 1
+BRIGHT_STEPS	= 5	# Original code default is 1
 
 ###### END ######
 
@@ -101,6 +101,12 @@ state = True
 #  pi accesses the local Pi's GPIO
 # ----------------
 pi = pigpio.pi()
+
+# ----------------
+#  Set variable to volume based brightness changing
+# ----------------
+curMaxVal = 0
+lstMaxVal = 0
 
 #########################################################################
 # ------------------ Audio Capture Set-up ------------------------------#
@@ -201,6 +207,8 @@ def checkKey():
 	global brightChanged
 	global state
 	global abort
+	global curMaxVal	# Grab current maxVal, use that to check against the past value, depending on that go up or down?
+	# Maybe just change the bright variable depending on the previous value?
 
 	# While loop for capturing stdin keyboard input
 	while True:
@@ -246,6 +254,11 @@ def checkKey():
 			abort = True
 			break
 
+		# Piece of thread function loop that updates brightness based on the current max value
+		# 1) Check current value
+		# 2) Compare to total brightness scale (function call to normalize data?)
+		# 3) Update last seen value?
+
 #########################################################################
 # --------------- Main Functional Code Section -------------------------#
 #########################################################################
@@ -254,7 +267,11 @@ def checkKey():
 #  Starting new thread and returning its identifier
 #	Note: The thread executes the function (checkKey) with the argument list (args=())
 # ----------------
-start_new_thread(checkKey, ())
+start_new_thread(checkKey, ())	# Printing is weird because I'm seeing the output of the new thread??
+# Note: Do I need this piece?
+#	-> Helps with starting/stoping the program
+#	-> Would allow manual changing of brightness? (Not needed in end product)
+#	-> Could use as method for updating brightness of LEDs based on sound
 
 # ----------------
 #  Prints out the control information to the stdout (e.g. original terminal that the code is being run from)
@@ -302,6 +319,26 @@ while abort == False:
 		elif r == 255 and g == 0 and b > 0:
 			b = updateColor(b, -STEPS)
 			setLights(BLUE_PIN, b)
+	# ??? Place audio capturing code here ??? 
+	# ----------------
+	#  While loop chunk for reading from the RCA Line In
+	# ----------------
+	# Read data from device
+	# Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
+	l,data = inp.read()	
+	if dbg != 0:
+		print ("Value of l:" + str(l))
+		print ("Value of data:" + str(data))
+	if l < 0:
+		continue
+	elif l == 0:
+		continue
+	elif l:
+		# Return the maximum of the absolute value of all samples in a fragment.
+		#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
+		#print ("Something Cool")
+		curMaxVal = audioop.max(data, 2)
+	time.sleep(.001)
 	
 # ----------------
 #  Prints out the message "Aborting..." to stdout
@@ -324,24 +361,3 @@ time.sleep(0.5)
 #  Stop a Pi connection
 # ----------------
 pi.stop()
-
-## TODO: Incorporate the below code into the LED loop script
-
-# ----------------
-#  While loop for reading from the RCA Line In
-# ----------------
-while True:
-	# Read data from device
-	# Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
-	l,data = inp.read()	
-	if dbg != 0:
-		print "Value of l:" + str(l)
-		print "Value of data:" + str(data)
-	if l < 0:
-		continue
-	elif l == 0:
-		continue
-	elif l:
-		# Return the maximum of the absolute value of all samples in a fragment.
-		print audioop.max(data, 2)
-	time.sleep(.001)
