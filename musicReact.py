@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# Nota Bene: This code is a mashed version fo two previous files (fading.py + sampleVolume.py)
+
 #
  # -----------------------------------------------------
  # File        fading.py
@@ -28,6 +30,14 @@
 
 # This script needs running pigpio (http://abyz.co.uk/rpi/pigpio/)
 
+## This is an example of a simple sound capture script.
+##
+## The script opens an ALSA pcm for sound capture. Set
+## various attributes of the capture, and reads in a loop,
+## Then prints the volume.
+##
+## To test it out, run it and shour at your microphone (input):
+
 
 ###### CONFIGURE THIS ######
 
@@ -38,13 +48,23 @@ BLUE_PIN  = 24
 
 # Number of color changes per step (more is faster, less is slower).
 # You also can use 0.X floats.
-STEPS     = 50
+STEPS     	= 50
+BRIGHT_STEPS	= 1	# Original code default is 1
 
 ###### END ######
 
+# ----------------
+#  Debug bit set for outputing debug messages
+# ----------------
+dbg = 0
 
+#########################################################################
+# ------------------ Import Libraries Section --------------------------#
+#########################################################################
 
-
+# ----------------
+#  Import of libraries for LED driving aspect of code (GPIO pins)
+# ----------------
 import os
 import sys
 import termios
@@ -53,153 +73,42 @@ import pigpio
 import time
 from thread import start_new_thread
 
+# ----------------
+#  Import of libraries for audio capturing aspect of code (RCA Line In)
+# ----------------
+import alsaaudio, time, audioop
+
+#########################################################################
+# -------------------- LED Control Set-up ------------------------------#
+#########################################################################
+
+# ----------------
+#  Setting of the defaul values for the RGB + Brightness Settings for driving LEDs
+# ----------------
 bright = 255
 r = 255.0
 g = 0.0
 b = 0.0
 
+# ----------------
+#  Setting of the defaul values for the state variables for driving LEDs
+# ----------------
 brightChanged = False
 abort = False
 state = True
 
+# ----------------
+#  pi accesses the local Pi's GPIO
+# ----------------
 pi = pigpio.pi()
 
-def updateColor(color, step):
-	color += step
-	
-	if color > 255:
-		return 255
-	if color < 0:
-		return 0
-		
-	return color
+#########################################################################
+# ------------------ Audio Capture Set-up ------------------------------#
+#########################################################################
 
-
-def setLights(pin, brightness):
-	realBrightness = int(int(brightness) * (float(bright) / 255.0))
-	pi.set_PWM_dutycycle(pin, realBrightness)
-
-
-def getCh():
-	fd = sys.stdin.fileno()
-	old_settings = termios.tcgetattr(fd)
-	
-	try:
-		tty.setraw(fd)
-		ch = sys.stdin.read(1)
-	finally:
-		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-		
-	return ch
-
-
-def checkKey():
-	global bright
-	global brightChanged
-	global state
-	global abort
-	
-	while True:
-		c = getCh()
-		
-		if c == '+' and bright < 255 and not brightChanged:
-			brightChanged = True
-			time.sleep(0.01)
-			brightChanged = False
-			
-			bright = bright + 1
-			print ("Current brightness: %d" % bright)
-			
-		if c == '-' and bright > 0 and not brightChanged:
-			brightChanged = True
-			time.sleep(0.01)
-			brightChanged = False
-			
-			bright = bright - 1
-			print ("Current brightness: %d" % bright)
-			
-		if c == 'p' and state:
-			state = False
-			print ("Pausing...")
-			
-			time.sleep(0.1)
-			
-			setLights(RED_PIN, 0)
-			setLights(GREEN_PIN, 0)
-			setLights(BLUE_PIN, 0)
-			
-		if c == 'r' and not state:
-			state = True
-			print ("Resuming...")
-			
-		if c == 'c' and not abort:
-			abort = True
-			break
-
-start_new_thread(checkKey, ())
-
-
-print ("+ / - = Increase / Decrease brightness")
-print ("p / r = Pause / Resume")
-print ("c = Abort Program")
-
-
-setLights(RED_PIN, r)
-setLights(GREEN_PIN, g)
-setLights(BLUE_PIN, b)
-
-
-while abort == False:
-	if state and not brightChanged:
-		if r == 255 and b == 0 and g < 255:
-			g = updateColor(g, STEPS)
-			setLights(GREEN_PIN, g)
-		
-		elif g == 255 and b == 0 and r > 0:
-			r = updateColor(r, -STEPS)
-			setLights(RED_PIN, r)
-		
-		elif r == 0 and g == 255 and b < 255:
-			b = updateColor(b, STEPS)
-			setLights(BLUE_PIN, b)
-		
-		elif r == 0 and b == 255 and g > 0:
-			g = updateColor(g, -STEPS)
-			setLights(GREEN_PIN, g)
-		
-		elif g == 0 and b == 255 and r < 255:
-			r = updateColor(r, STEPS)
-			setLights(RED_PIN, r)
-		
-		elif r == 255 and g == 0 and b > 0:
-			b = updateColor(b, -STEPS)
-			setLights(BLUE_PIN, b)
-	
-print ("Aborting...")
-
-setLights(RED_PIN, 0)
-setLights(GREEN_PIN, 0)
-setLights(BLUE_PIN, 0)
-
-time.sleep(0.5)
-
-pi.stop()
-
-"""
-	Code for the capturing of Audio input
-"""
-
-#!/usr/bin/python
-## This is an example of a simple sound capture script.
-##
-## The script opens an ALSA pcm for sound capture. Set
-## various attributes of the capture, and reads in a loop,
-## Then prints the volume.
-##
-## To test it out, run it and shour at your microphone (input):
-
-import alsaaudio, time, audioop
-
+# --------------------------------------------
+#  Code for setting the properties and attributes for capturing the RCA Line In (e.g. audio)
+# --------------------------------------------
 # Open the device in nonblocking capture mode. The last argument could
 # just as well have been zero for blocking mode. Then we could have
 # left out the sleep call in the bottom of the loop
@@ -219,11 +128,212 @@ inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
 # mode.
 inp.setperiodsize(160)
 
-dbg = 0
+#########################################################################
+# --------------- Function Definition Section --------------------------#
+#########################################################################
 
+# ----------------
+#  updateColor function: updates the color value for a given color variable
+#	Input: color (float varaible), step (int/float variable)
+#	Output: returns int/float for the color variable
+#
+#  Note: If the color value goes above/below the possible max/min value, 
+#	then the max/min value is returned
+# ----------------
+def updateColor(color, step):
+	color += step
+	
+	if color > 255:
+		return 255
+	if color < 0:
+		return 0
+		
+	return color
+
+# ----------------
+#  setLights funciton: sets the PWM cycle for a specific color pin to a certain brightness based
+#		on the 'strength'/amount of that given color
+#	Input: pin (int variable for GPIO pin), brightness (int/float variable for 
+#		'brightness' of a color)
+#	Output: None
+# ----------------
+def setLights(pin, brightness):
+	# Will return a value between 255 to 0 (int() helps with the (1/255) case = 0)
+	realBrightness = int(int(brightness) * (float(bright) / 255.0))
+	# Starts (non-zero dutycycle) or stops (0) PWM pulses on the GPIO
+	pi.set_PWM_dutycycle(pin, realBrightness)
+
+# ----------------
+#  getCh function: obtains and returns a single character (i.e. byte) from stdin
+#	Input: None
+#	Output: None
+# ----------------
+def getCh():
+	# Set the value of 'fd' to the file descriptor for stdin (i.e. 0)
+	fd = sys.stdin.fileno()
+	# Command to return a list containing the tty attributes for file descriptor 'fd' as follows:
+	#	[iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
+	old_settings = termios.tcgetattr(fd)
+	# Try statement for setting the properies of the stdin file descriptor
+	try:
+		# Change the mode of the file descriptor 'fd' to raw
+		tty.setraw(fd)
+		# Read 1 byte from stdin
+		ch = sys.stdin.read(1)
+	# Clause that is executed in any event before leaving the try statement
+	#  Note: whether an exception (handled or not) has occurred or not
+	finally:
+		# Set the tty attributes for the file descripttor (fd) from the attributes (old_settings)
+		#  Note: The 'when' argument (termios.TCSADRAIN) determines when the attributes change.
+		#	-> TCSADRAIN = to change after transmitting all queued output
+		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+	# Return the character (byte) that was read from stdin
+	return ch
+
+# ----------------
+#  checkKey function:
+#	Input: None
+#	Output: None
+# ----------------
+def checkKey():
+	# Access the out-of-scope global variables from within this function
+	global bright
+	global brightChanged
+	global state
+	global abort
+
+	# While loop for capturing stdin keyboard input
+	while True:
+		# Grab a single byte character from stdin and set to varaible 'c'
+		c = getCh()
+		
+		# Scenario where '+' is hit and bright less than 255	
+		if c == '+' and bright < 255 and not brightChanged:
+			brightChanged = True
+			time.sleep(0.01)	# Not sure the exact purpose of this sleep. Timing?
+			brightChanged = False
+			# Set the brightness up by BRIGHT_STEPS (default = 1)
+			bright = bright + BRIGHT_STEPS
+			print ("Current brightness: %d" % bright)
+		
+		# Scenario where '-' is hit and bright greater than 0	
+		if c == '-' and bright > 0 and not brightChanged:
+			brightChanged = True
+			time.sleep(0.01)	# Not sure the exact purpose of this sleep. Timing?
+			brightChanged = False
+			# Set the brightness down by BRIGHT_STEPS (default = 1)	
+			bright = bright - BRIGHT_STEPS
+			print ("Current brightness: %d" % bright)
+		
+		# Scenario where 'p' is hit; pauses code running	
+		if c == 'p' and state:
+			state = False
+			print ("Pausing...")
+			
+			time.sleep(0.1)
+			# Set all color pin brightness to zero (turn off colors)
+			setLights(RED_PIN, 0)
+			setLights(GREEN_PIN, 0)
+			setLights(BLUE_PIN, 0)
+		
+		# Scenario where 'r' is hit; resumes code running	
+		if c == 'r' and not state:
+			state = True
+			print ("Resuming...")
+		
+		# Scenario where 'c' is hit; aborts the code running (by setting the abort variable)
+		if c == 'c' and not abort:
+			abort = True
+			break
+
+#########################################################################
+# --------------- Main Functional Code Section -------------------------#
+#########################################################################
+
+# ----------------
+#  Starting new thread and returning its identifier
+#	Note: The thread executes the function (checkKey) with the argument list (args=())
+# ----------------
+start_new_thread(checkKey, ())
+
+# ----------------
+#  Prints out the control information to the stdout (e.g. original terminal that the code is being run from)
+# ----------------
+print ("+ / - = Increase / Decrease brightness")
+print ("p / r = Pause / Resume")
+print ("c = Abort Program")
+
+# ----------------
+#  Set the starting color brightness values for each GPIO pin on the Pi
+# ----------------
+setLights(RED_PIN, r)
+setLights(GREEN_PIN, g)
+setLights(BLUE_PIN, b)
+
+# ----------------
+#  While loop for constantly changing the RGB mix (e.g. LED display color) constantly over time.
+#	Note: This section regulates the PWM on each color GPIO pin
+# ----------------
+while abort == False:
+	# Enter this if statement if the code is not paused (state variable) and the brightness of the LEDs
+	#	has not been changed
+	if state and not brightChanged:
+		# If statement for increasing the PWM for the green GPIO pin
+		if r == 255 and b == 0 and g < 255:
+			g = updateColor(g, STEPS)
+			setLights(GREEN_PIN, g)
+		# Elif statement for decreasing the PWM for the red GPIO pin
+		elif g == 255 and b == 0 and r > 0:
+			r = updateColor(r, -STEPS)
+			setLights(RED_PIN, r)
+		# Elif statement for increasing the PWM for the blue GPIO pin
+		elif r == 0 and g == 255 and b < 255:
+			b = updateColor(b, STEPS)
+			setLights(BLUE_PIN, b)
+		# Elif statement for decreasing the PWM for the green GPIO pin
+		elif r == 0 and b == 255 and g > 0:
+			g = updateColor(g, -STEPS)
+			setLights(GREEN_PIN, g)
+		# Elif statement for increasing the PWM for the red GPIO pin
+		elif g == 0 and b == 255 and r < 255:
+			r = updateColor(r, STEPS)
+			setLights(RED_PIN, r)
+		# Elif statement for decreasing the PWM for the blue GPIO pin
+		elif r == 255 and g == 0 and b > 0:
+			b = updateColor(b, -STEPS)
+			setLights(BLUE_PIN, b)
+	
+# ----------------
+#  Prints out the message "Aborting..." to stdout
+# ----------------
+print ("Aborting...")
+
+# ----------------
+#  Set all the color GPIO pins to 0 for turning them off at the end of the program
+# ----------------
+setLights(RED_PIN, 0)
+setLights(GREEN_PIN, 0)
+setLights(BLUE_PIN, 0)
+
+# ----------------
+#  Sleep time (unsure of the reason/purpose for this)
+# ----------------
+time.sleep(0.5)
+
+# ----------------
+#  Stop a Pi connection
+# ----------------
+pi.stop()
+
+## TODO: Incorporate the below code into the LED loop script
+
+# ----------------
+#  While loop for reading from the RCA Line In
+# ----------------
 while True:
 	# Read data from device
-	l,data = inp.read()
+	# Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
+	l,data = inp.read()	
 	if dbg != 0:
 		print "Value of l:" + str(l)
 		print "Value of data:" + str(data)
