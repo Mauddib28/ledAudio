@@ -18,7 +18,7 @@ import wave				# For dealing with WAVE files
 
 ### Globals
 
-debugBit = 0
+debugBit = 1
 #CHUNK = 1024
 
 ### Functions
@@ -118,6 +118,17 @@ def audio_analysis__bucketize_wave_file_frequencies(input_file_pointer, io_flag=
             # add exactly as many new lines as they are needed to
             # fill clear the screen in the next iteration:
             print("\n" * (int(rows) - freqs2.shape[0] - 1))
+
+            ## Test printing
+            if debugBit != 0:       # ~!~
+                print("\t?\t-\tShorts Variable:\t{0}".format(shorts))
+                print("\t?\t-\tlen(shorts):\t{0}".format(len(shorts)))
+                print("\t?\t-\tX:\t{0}\n\t\t\tlen(X):\t{1}\n\t\t\tx:\t{2}\n\t\t\tlen(x):\t{3}".format(X, len(X), x, len(x)))
+                print("\t?\t-\tfreqs:\t{0}".format(freqs))
+                print("\t?\t-\tfreqs.shape[0]:\t{0}\n\t\t\twanted_num_of_bins:\t{1}".format(freqs.shape[0], wanted_num_of_bins))
+                print("\t?\t-\twanted_step:\t{0}\n\t\t\tfreqs2:\t{1}\n\t\t\tlen(freqs2):\t{2}".format(wanted_step, freqs2, len(freqs2)))
+                print("\t?\t-\tlen(fixed_re-sample):\t{0}".format(len(np.pad(freqs2.astype(float), (0, m*n - freqs2.size), mode='reflect', reflect_type='even'))))
+
     else:
         if debugBit != 0:
             print("\tMoving down the Wave Audio File path")
@@ -159,9 +170,13 @@ def audio_analysis__bucketize_wave_file_frequencies(input_file_pointer, io_flag=
             fs = wf.getframerate()          # Frame rate (per second?)
             buff_size = 0.2                 # Window size in seconds
             wanted_num_of_bins = 40         # Number of Frequency Bins to Display
+            # Note: The above needs to be in line with the values that the FFT will produce
+            #   - Therefore will need to some how produce a remainder-less division of the
+            #       frame / array information and the desired number of buckets
             CHUNK = int(fs * buff_size)     # Making CHUNK based on buckets?
             # open stream (2)	|	Note: Configuration for outputting the audio??
             stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+            #stream = p.open(format=pyaudio.paInt16,
 	        channels=wf.getnchannels(),
 	        rate=fs,
 	        output=True,
@@ -171,16 +186,18 @@ def audio_analysis__bucketize_wave_file_frequencies(input_file_pointer, io_flag=
         data = wf.readframes(CHUNK)
 	
 #        while 1:  # for each recorded window (until ctr+c) is pressed
-        print("Reading Data....", end="")
+        if debugBit != 0:
+            print("Reading Data....", end="")
         while len(data) > 0:    # Read through the provided WAVE file
             # Get the Current Block and Convert to List of Short Ints
             #block = stream.read(int(fs * buff_size))        # Note: Can NOT read from stream... 
             # The above should just be the chunk of data that has been read (since the relative size is the same)
-            block = data
+            block = data        # NOTE: ISSUE MIGHT BE HERE??? Make sure scope is correct
             format = "%dh" % (len(block) / 2)
             shorts = struct.unpack(format, block)
             if debugBit != 0:       # ~!~
-                print("\t?\t-\tShorts Variable:\t{0}".format(shorts))
+                #print("\t?\t-\tShorts Variable:\t{0}".format(shorts))
+                print("\t?\t-\tlen(shorts):\t{0}".format(len(shorts)))
 
             # Then Normalize and Convert to numpy array:
             x = np.double(list(shorts)) / (2**15)
@@ -200,49 +217,52 @@ def audio_analysis__bucketize_wave_file_frequencies(input_file_pointer, io_flag=
             freqs = (np.arange(0, 1 + 1.0/len(X), 1.0 / len(X)) * fs / 2)
 
             # Debug Check
-            if debugBit != 1:       # ~!~
+            if debugBit != 0:       # ~!~
+                print("\t?\t-\tX:\t{0}\n\t\t\tlen(X):\t{1}\n\t\t\tx:\t{2}\n\t\t\tlen(x):\t{3}".format(X, len(X), x, len(x)))
                 print("\t?\t-\tfreqs:\t{0}".format(freqs))
                 print("\t?\t-\tfreqs.shape[0]:\t{0}\n\t\t\twanted_num_of_bins:\t{1}".format(freqs.shape[0], wanted_num_of_bins))
 
             # ... and Re-Sample to a fixed number of frequency bins (to visualize)
             wanted_step = (int(freqs.shape[0] / wanted_num_of_bins))
-            freqs2 = freqs[0::wanted_step].astype('int')
+            freqs2 = freqs[0::wanted_step].astype('int')        # Takes every 'wanted_step'th item from freqs as the re-sample for freqs2
 
             # Debug Check
-            if debugBit != 1:       # ~!~
-                print("\t?\t-\twanted_step:\t{0}\n\t\t\tfreqs2:\t{1}".format(wanted_step, freqs2))
+            if debugBit != 0:       # ~!~
+                print("\t?\t-\twanted_step:\t{0}\n\t\t\tfreqs2:\t{1}\n\t\t\tlen(freqs2):\t{2}".format(wanted_step, freqs2, len(freqs2)))
 
-            '''
-            X2 = np.mean(X.reshape(-1, wanted_step), axis=1)
+            # Further process the above information to be able to safely perform the X2 step below
+            m, n = int(len(freqs2)/wanted_step) + (len(freqs2) % wanted_step > 0), wanted_step
+            # NOTE: This issue is here??? Must be because the dimensions of the resulting
+            #   data are not correct
+            #   - This is causing there is only be a SINGLE BUCKET at the end
+            #   -> This happens because the .reshape command fucks up and ONLY returns
+            #       a SINGLE dimension array
+
+            # Debug Check
+            if debugBit != 0:       # ~!~
+                print("\t?\t-\tlen(fixed_re-sample):\t{0}".format(len(np.pad(freqs2.astype(float), (0, m*n - freqs2.size), mode='reflect', reflect_type='even'))))
+
+            #X2 = np.mean(X.reshape(-1, wanted_step), axis=1)
+            #X2 = np.mean(X)
+            X2 = np.mean(np.pad(freqs2.astype(float), (0, m*n - freqs2.size), mode='reflect', reflect_type='even').reshape(-1, wanted_step), axis=1)
 
             # Plot (freqs, fft) as a Horizontal Histogram:
             fig = tpl.figure()
             fig.barh(X2, labels=[str(int(f)) + " Hz" for f in freqs2[0:-1]],
                     show_vals=False, max_width=max_width_from_energy)
             fig.show()
-            '''
+
+            # Add Exactly as many new lines as they are needed to fill clear the screen
+            #   in the next iteraction
+            print("\n" * (int(rows) - freqs2.shape[0] -1 ))
 
             # Before restarting the loop, grab the next piece of data
-            print(".", end="")
+            if debugBit != 0:
+                print(".", end="")
             data = wf.readframes(CHUNK)
-            '''
-            freqs = (np.arange(0, 1 + 1.0/len(X), 1.0 / len(X)) * fs / 2)
 
-            # ... and resample to a fix number of frequency bins (to visualize)
-            wanted_step = (int(freqs.shape[0] / wanted_num_of_bins))
-            freqs2 = freqs[0::wanted_step].astype('int')
-            X2 = np.mean(X.reshape(-1, wanted_step), axis=1)
-
-            # plot (freqs, fft) as horizontal histogram:
-            fig = tpl.figure()
-            fig.barh(X2, labels=[str(int(f)) + " Hz" for f in freqs2[0:-1]],
-                    show_vals=False, max_width=max_width_from_energy)
-            fig.show()
-            # add exactly as many new lines as they are needed to
-            # fill clear the screen in the next iteration:
-            print("\n" * (int(rows) - freqs2.shape[0] - 1))
-            '''
-        print("")
+        if debugBit != 0:
+            print("")
 
     print("[+] Completed Frequency Bucketization")
 
