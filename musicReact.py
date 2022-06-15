@@ -37,6 +37,23 @@
 ## Then prints the volume.
 ##
 ## To test it out, run it and shour at your microphone (input):
+##  - This worked
+
+## Pulling Audio-to-Color code from Python 2 Github project (Psynesthesia)
+##  - URL:      https://github.com/rho-bit/Psynesthesia
+## Basically solves the audio-to-color problem
+## 
+## Note: Need to streamline and minimize graphics
+##  - Minial resource usage to be able to run on a Raspi
+##  - Dirty 2to3 conversion of code; TODO: Clean up code and add documentation
+##
+## Good Resouses:
+##  - https://scipython.com/blog/converting-a-spectrum-to-a-colour/
+##  - http://www.noah.org/wiki/Wavelength_to_RGB_in_Python
+
+## Can use the fake-rpigpio pypi package to emulate the Raspi while working
+##  in non-Raspi environments
+##  - URL:      https://pypi.org/project/fake-rpigpio/
 
 
 ###### CONFIGURE THIS ######
