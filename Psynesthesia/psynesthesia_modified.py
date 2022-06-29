@@ -1,14 +1,26 @@
-import pyaudio, wave, pygame
-import numpy as np
-from wavtorgb import *
-from math import *
+###
+# Editted version of the original Psynethesia by rho-bit
+#   - Changed output to RGB tuple 
+#   - Removed pygame output to minimize resource usage
+##
+
+### Imports
+import pyaudio              # Import for pyaudio?
+import pygame               # Import for pygame window
+import wave                 # Import for WAVE file I/O
+import numpy as np          # Import for FFT stuff
+from wavtorgb import *      # Import from rho-bit written code
+from math import *          # Import from math libraries
+
+### Globals
+debugBit != 0
 
 
 #Request for the file name of the WAV file.
 raw = input("WAV file name?: ")
 #Starts Pygame and opens the screen 
-pygame.init()
-screen = pygame.display.set_mode((800, 800))
+#pygame.init()
+#screen = pygame.display.set_mode((800, 800))
 
 chunk = 2048
 # open the WAV file
@@ -19,8 +31,8 @@ RATE = wf.getframerate()
 window = np.blackman(chunk)
 # open the stream
 p = pyaudio.PyAudio()
-background = pygame.Surface(screen.get_size())
-background = background.convert()
+#background = pygame.Surface(screen.get_size())
+#background = background.convert()
 
 thefreq = 1.0
 #global thefreq
@@ -67,11 +79,14 @@ while len(data) == chunk*swidth:
         rgb = wavelen2rgb(nm, MaxIntensity=255)
         print("the colors for this nm are: "+str(rgb))
         #Fills the background with the appropriate colot, does this so fast, it creates a "fading effect" in between colors
-        background.fill((rgb[0],rgb[1],rgb[2]))
+        #background.fill((rgb[0],rgb[1],rgb[2]))
+        # Debug output for checking result of 'rgb' variable (return from wavelen2rgb)
+        if debugBit != 1:       # ~!~
+            print("[+] Colors Generated:\t{0}\n\tColor 0:\t{1}\n\tColor 1:\t{2}\n\tColor 2:\t{3}".format(rgb, rgb[0], rgb[1], rgb[2]))
         #"blits" (renders) the color to the background
-        screen.blit(background, (0, 0))
+        #screen.blit(background, (0, 0))
         #and finally displays the background
-        pygame.display.flip()
+        #pygame.display.flip()
 	
 	
 	
