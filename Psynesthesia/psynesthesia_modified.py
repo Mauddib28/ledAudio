@@ -6,14 +6,14 @@
 
 ### Imports
 import pyaudio              # Import for pyaudio?
-import pygame               # Import for pygame window
+#import pygame               # Import for pygame window
 import wave                 # Import for WAVE file I/O
 import numpy as np          # Import for FFT stuff
 from wavtorgb import *      # Import from rho-bit written code
 from math import *          # Import from math libraries
 
 ### Globals
-debugBit != 0
+debugBit = 0
 
 
 #Request for the file name of the WAV file.
