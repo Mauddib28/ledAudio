@@ -88,7 +88,10 @@ import termios
 import tty
 import pigpio
 import time
-from thread import start_new_thread
+try:
+	from thread import start_new_thread
+except:
+	from _thread import start_new_thread
 
 # ----------------
 #  Import of libraries for audio capturing aspect of code (RCA Line In)
