@@ -14,7 +14,7 @@ from math import *          # Import from math libraries
 
 ### Globals
 debugBit = 0
-
+enableAudioBit = 0
 
 #Request for the file name of the WAV file.
 raw = input("WAV file name?: ")
@@ -36,11 +36,21 @@ p = pyaudio.PyAudio()
 
 thefreq = 1.0
 #global thefreq
-stream = p.open(format =
+## Check if an audio output is expected or not
+if enableAudioBit != 0:
+    # Playing the Audio will Occur
+    stream = p.open(format =
                 p.get_format_from_width(wf.getsampwidth()),
                 channels = wf.getnchannels(),
                 rate = RATE,
                 output = True)
+else:
+    # Audio will NOT be Playe
+    stream = p.open(format =
+                p.get_format_from_width(wf.getsampwidth()),
+                channels = wf.getnchannels(),
+                rate = RATE,
+                output = False)
 
 # read the incoming data
 data = wf.readframes(chunk)
