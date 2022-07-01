@@ -311,6 +311,13 @@ setLights(GREEN_PIN, g)
 setLights(BLUE_PIN, b)
 
 # ----------------
+#  Check and setting up for an input file light chaing debugging
+# ----------------
+if not using_microphone_flag:
+    input_test_filename="audio-to-rgb.conversion"
+    conversion_debugging_input = open(input_test_filename, 'r')
+
+# ----------------
 #  While loop for constantly changing the RGB mix (e.g. LED display color) constantly over time.
 #	Note: This section regulates the PWM on each color GPIO pin
 # ----------------
@@ -363,12 +370,26 @@ while abort == False:
 	    	#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
 	    	#print ("Something Cool")
 	    	curMaxVal = audioop.max(data, 2)
+	# Read input from the debugging file
+	else:
+	    print("[*] Reading line from input file")
+	    rgb = conversion_debugging_input.readline()
+	    if rgb == "Red\tGreen\tBlue\n":
+	        print("... Header file.... Ignoring")
+	    else:
+	        rgb_parsed = rgb.strip().split('\t')
+	        r = rgb_parsed[0]
+	        g = rgb_parsed[1]
+	        b = rgb_parsed[2]
+
 	time.sleep(.001)
 	
 # ----------------
 #  Prints out the message "Aborting..." to stdout
 # ----------------
 print ("Aborting...")
+if not using_microphone_flag:
+    conversion_debugging_input.close()
 
 # ----------------
 #  Set all the color GPIO pins to 0 for turning them off at the end of the program
