@@ -16,6 +16,8 @@ from math import *          # Import from math libraries
 print("[*] Setting up the Global Variables")
 debugBit = 0
 enableAudioBit = 0
+# Note: The output format here is in the form RGB (Red, Green, Blue)
+testOutput_conversionFile='./audio-to-rgb.conversion'
 
 #Request for the file name of the WAV file.
 print("[*] Requesting the input WAV file")
@@ -55,6 +57,14 @@ stream = p.open(format =
 #                channels = wf.getnchannels(),
 #                rate = RATE,
 #                input = True)
+
+# Creating the conversion output file
+#   - TODO: Have this be a check for existing file instead of flat overwrite
+print("[*] Creating the Audio-to-RGB Output File")
+conversion_output = open(testOutput_conversionFile, 'w')
+fast_overwrite = "Red\tGreen\tBlue\n"
+conversion_output.writelines(fast_overwrite)
+conversion_output.close()
 
 print("[*] Reading the first chunk of data")
 # read the incoming data
@@ -102,7 +112,12 @@ while len(data) == chunk*swidth:
         #background.fill((rgb[0],rgb[1],rgb[2]))
         # Debug output for checking result of 'rgb' variable (return from wavelen2rgb)
         if debugBit != 1:       # ~!~
-            print("[+] Colors Generated:\t{0}\n\tColor 0:\t{1}\n\tColor 1:\t{2}\n\tColor 2:\t{3}".format(rgb, rgb[0], rgb[1], rgb[2]))
+            print("[+] Colors Generated:\t{0}\n\tColor 0 (Red):\t{1}\n\tColor 1 (Green):\t{2}\n\tColor 2 (Blue):\t{3}".format(rgb, rgb[0], rgb[1], rgb[2]))
+            print("... Writing Conversion to Output File [ {0} ]".format(testOutput_conversionFile))
+            conversion_output = open(testOutput_conversionFile, 'a')
+            conversion_line = "{0}\t{1}\t{2}\n".format(rgb[0], rgb[1], rgb[2])
+            conversion_output.writelines(conversion_line)
+            conversion_output.close()
         #"blits" (renders) the color to the background
         #screen.blit(background, (0, 0))
         #and finally displays the background
