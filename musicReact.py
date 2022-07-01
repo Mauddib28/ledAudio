@@ -381,7 +381,7 @@ while abort == False:
 	        r = rgb_parsed[0]
 	        g = rgb_parsed[1]
 	        b = rgb_parsed[2]
-                print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
+	        print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
 
 	time.sleep(.001)
 	
