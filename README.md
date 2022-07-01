@@ -19,3 +19,7 @@ arecord -D hw:0,0 -f DAT my_record.wav
 play track.wav stat -freq
 	-> calculates the input's power spectrum (4096 point DFT) instead of the statictics normally done
 
+
+# Test WAV files from Columbia
+https://www.ee.columbia.edu/~dpwe/sounds/music/
+	- Found that issues happen when using WAV files that are not at the expected 44.1kHz; otherwise get double the read size
