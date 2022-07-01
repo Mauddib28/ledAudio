@@ -13,10 +13,12 @@ from wavtorgb import *      # Import from rho-bit written code
 from math import *          # Import from math libraries
 
 ### Globals
+print("[*] Setting up the Global Variables")
 debugBit = 0
 enableAudioBit = 0
 
 #Request for the file name of the WAV file.
+print("[*] Requesting the input WAV file")
 raw = input("WAV file name?: ")
 #Starts Pygame and opens the screen 
 #pygame.init()
@@ -37,25 +39,33 @@ p = pyaudio.PyAudio()
 thefreq = 1.0
 #global thefreq
 ## Check if an audio output is expected or not
-if enableAudioBit != 0:
+#if enableAudioBit != 0:
     # Playing the Audio will Occur
-    stream = p.open(format =
+# Openning the stream
+print("[*] Openning the PyAudio stream")
+stream = p.open(format =
                 p.get_format_from_width(wf.getsampwidth()),
                 channels = wf.getnchannels(),
                 rate = RATE,
                 output = True)
-else:
+#else:
     # Audio will NOT be Playe
-    stream = p.open(format =
-                p.get_format_from_width(wf.getsampwidth()),
-                channels = wf.getnchannels(),
-                rate = RATE,
-                output = False)
+#    stream = p.open(format =
+#                p.get_format_from_width(wf.getsampwidth()),
+#                channels = wf.getnchannels(),
+#                rate = RATE,
+#                input = True)
 
+print("[*] Reading the first chunk of data")
 # read the incoming data
 data = wf.readframes(chunk)
+print("[*] Starting the while loop for the Audio Stream")
+if debugBit != 1:   # ~!~
+    print("[?] Test Pre-While Loop")
+    print("\tChunk:\t{0}\n\tData:\t{1}\n\tSWidth:\t{2}\n\tLen(Data):\t{3}\n\tChunk*SWidth:\t{4}".format(chunk, data, swidth, len(data), chunk*swidth))
 # play stream and find the frequency of each chunk
 while len(data) == chunk*swidth:
+    print("\tWrite data out to the Stream")
     # write data out to the audio stream
     stream.write(data)
     # unpack the data and times by the hamming window
@@ -98,13 +108,17 @@ while len(data) == chunk*swidth:
         #and finally displays the background
         #pygame.display.flip()
 	
-	
-	
+    print("\tReading Next chunk of Data")	
     # read some more data
     data = wf.readframes(chunk)
 
+# If there is data write it out the stream
+print("[*] Attempting to write last piece of data")
 if data:
     stream.write(data)
 
+print("[*] Closing Stream and PyAudio instance")
 stream.close()
 p.terminate()
+
+print("[+] Terminating Psynetheia Modified Script")

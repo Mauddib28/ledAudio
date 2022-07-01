@@ -7,3 +7,6 @@
 
    57  python3 -m pip install numpy
    61  sudo apt-get install libatlas-base-dev
+
+   sudo apt-get update
+   sudo apt-get install pigpio python-pigpio python3-pigpio
