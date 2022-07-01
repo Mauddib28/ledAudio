@@ -372,15 +372,16 @@ while abort == False:
 	    	curMaxVal = audioop.max(data, 2)
 	# Read input from the debugging file
 	else:
-	    print("[*] Reading line from input file")
+	    print("[*] Reading line from input file\n")
 	    rgb = conversion_debugging_input.readline()
 	    if rgb == "Red\tGreen\tBlue\n":
-	        print("... Header file.... Ignoring")
+	        print("... Header file.... Ignoring\n")
 	    else:
 	        rgb_parsed = rgb.strip().split('\t')
 	        r = rgb_parsed[0]
 	        g = rgb_parsed[1]
 	        b = rgb_parsed[2]
+                print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
 
 	time.sleep(.001)
 	
