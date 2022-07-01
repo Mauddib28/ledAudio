@@ -10,3 +10,5 @@
 
    sudo apt-get update
    sudo apt-get install pigpio python-pigpio python3-pigpio
+
+   # Get pigpiod from:	https://abyz.me.uk/rpi/pigpio/download.html

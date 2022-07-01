@@ -74,6 +74,7 @@ BRIGHT_STEPS	= 5	# Original code default is 1
 #  Debug bit set for outputing debug messages
 # ----------------
 dbg = 0
+using_microphone_flag = 0
 
 #########################################################################
 # ------------------ Import Libraries Section --------------------------#
@@ -132,27 +133,29 @@ lstMaxVal = 0
 # ------------------ Audio Capture Set-up ------------------------------#
 #########################################################################
 
-# --------------------------------------------
-#  Code for setting the properties and attributes for capturing the RCA Line In (e.g. audio)
-# --------------------------------------------
-# Open the device in nonblocking capture mode. The last argument could
-# just as well have been zero for blocking mode. Then we could have
-# left out the sleep call in the bottom of the loop
-inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE,alsaaudio.PCM_NONBLOCK)
-
-# Set attributes: Mono, 8000 Hz, 16 bit little endian samples
-inp.setchannels(2)	# 2 for stereo
-inp.setrate(48000)	# Can't be 8000 since that is for telephony (too slow?)
-inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-
-# The period size controls the internal number of frames per period.
-# The significance of this parameter is documented in the ALSA api.
-# For our purposes, it is ufficient to know that reads from the device
-# will return this many frames. Each frame being 2 bytes long.
-# This means that the reads below will return either 320 bytes of data
-# or 0 bytes of data. The latter is possible because we are in nonblocking
-# mode.
-inp.setperiodsize(160)
+if using_microphone_flag:
+    print("[*] Using Microphone as Input")
+    # --------------------------------------------
+    #  Code for setting the properties and attributes for capturing the RCA Line In (e.g. audio)        [ MICROPHONE RECORDING ]
+    # --------------------------------------------
+    # Open the device in nonblocking capture mode. The last argument could
+    # just as well have been zero for blocking mode. Then we could have
+    # left out the sleep call in the bottom of the loop
+    inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE,alsaaudio.PCM_NONBLOCK)
+    
+    # Set attributes: Mono, 8000 Hz, 16 bit little endian samples
+    inp.setchannels(2)	# 2 for stereo
+    inp.setrate(48000)	# Can't be 8000 since that is for telephony (too slow?)
+    inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+    
+    # The period size controls the internal number of frames per period.
+    # The significance of this parameter is documented in the ALSA api.
+    # For our purposes, it is ufficient to know that reads from the device
+    # will return this many frames. Each frame being 2 bytes long.
+    # This means that the reads below will return either 320 bytes of data
+    # or 0 bytes of data. The latter is possible because we are in nonblocking
+    # mode.
+    inp.setperiodsize(160)
 
 #########################################################################
 # --------------- Function Definition Section --------------------------#
@@ -343,21 +346,23 @@ while abort == False:
 	# ----------------
 	#  While loop chunk for reading from the RCA Line In
 	# ----------------
-	# Read data from device
-	# Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
-	l,data = inp.read()	
-	if dbg != 0:
-		print ("Value of l:" + str(l))
-		print ("Value of data:" + str(data))
-	if l < 0:
-		continue
-	elif l == 0:
-		continue
-	elif l:
-		# Return the maximum of the absolute value of all samples in a fragment.
-		#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
-		#print ("Something Cool")
-		curMaxVal = audioop.max(data, 2)
+	# Read data from device / input
+	if using_microphone_flag:
+	    print("[*] Using the Microphone to Update the Colors (??)")
+	    # Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
+	    l,data = inp.read()	
+	    if dbg != 0:
+	    	print ("Value of l:" + str(l))
+	    	print ("Value of data:" + str(data))
+	    if l < 0:
+	    	continue
+	    elif l == 0:
+	    	continue
+	    elif l:
+	    	# Return the maximum of the absolute value of all samples in a fragment.
+	    	#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
+	    	#print ("Something Cool")
+	    	curMaxVal = audioop.max(data, 2)
 	time.sleep(.001)
 	
 # ----------------
