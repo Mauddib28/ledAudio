@@ -27,6 +27,11 @@
  # along with this program. If not, see <http://www.gnu.org/licenses/>
 #
 
+####
+# Editted Last on:      2022-07-8
+# Editted Last by:      Paul A. Wortman
+####
+
 
 # This script needs running pigpio (http://abyz.co.uk/rpi/pigpio/)
 

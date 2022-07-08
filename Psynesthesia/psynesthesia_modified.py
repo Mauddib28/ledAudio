@@ -4,7 +4,15 @@
 #   - Removed pygame output to minimize resource usage
 ##
 
-### Imports
+## TODO: Fix up this file into the same amount of structure as the music_react script
+
+#########################################################################
+# ------------------ Import Libraries Section --------------------------#
+#########################################################################
+
+# ----------------
+#  Import of libraries for intaking a .WAV file and converting frequencies to colors
+# ----------------
 import pyaudio              # Import for pyaudio?
 #import pygame               # Import for pygame window
 import wave                 # Import for WAVE file I/O
@@ -12,12 +20,26 @@ import numpy as np          # Import for FFT stuff
 from wavtorgb import *      # Import from rho-bit written code
 from math import *          # Import from math libraries
 
-### Globals
+#########################################################################
+# ---------------- Globals Definition Section --------------------------#
+#########################################################################
 print("[*] Setting up the Global Variables")
 debugBit = 0
 enableAudioBit = 0
 # Note: The output format here is in the form RGB (Red, Green, Blue)
 testOutput_conversionFile='./audio-to-rgb.conversion'
+
+#########################################################################
+# --------------- Function Definition Section --------------------------#
+#########################################################################
+
+
+
+
+#########################################################################
+# --------------- Main Functional Code Section -------------------------#
+#########################################################################
+
 
 #Request for the file name of the WAV file.
 print("[*] Requesting the input WAV file")
