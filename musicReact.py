@@ -316,6 +316,7 @@ setLights(BLUE_PIN, b)
 if not using_microphone_flag:
     input_test_filename="audio-to-rgb.conversion"
     conversion_debugging_input = open(input_test_filename, 'r')
+    first_time_completed = 0
 
 # ----------------
 #  While loop for constantly changing the RGB mix (e.g. LED display color) constantly over time.
@@ -355,7 +356,8 @@ while abort == False:
 	# ----------------
 	# Read data from device / input
 	if using_microphone_flag:
-	    print("[*] Using the Microphone to Update the Colors (??)")
+	    if dgb != 0:
+	        print("[*] Using the Microphone to Update the Colors (??)")
 	    # Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
 	    l,data = inp.read()	
 	    if dbg != 0:
@@ -372,17 +374,33 @@ while abort == False:
 	    	curMaxVal = audioop.max(data, 2)
 	# Read input from the debugging file
 	else:
-	    print("[*] Reading line from input file\n")
+	    if dbg != 0:
+	        print("[*] Reading line from input file\n")
 	    rgb = conversion_debugging_input.readline()
 	    if rgb == "Red\tGreen\tBlue\n":
-	        print("... Header file.... Ignoring\n")
+	        if dbg != 0:
+	            print("... Header file.... Ignoring\n")
+	    elif len(rgb) == 0:
+	        if first_time_completed != 1:
+	            if dbg != 1:        # ~!~
+	                print("[+] Completed Read through Input File")
+	            first_time_completed = 1
+	        #else:
+	            #first_time_completed = 1
 	    else:
 	        rgb_parsed = rgb.strip().split('\t')
-	        r = rgb_parsed[0]
-	        g = rgb_parsed[1]
-	        b = rgb_parsed[2]
-	        print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
-
+	        try:
+	            r = rgb_parsed[0]
+	            g = rgb_parsed[1]
+	            b = rgb_parsed[2]
+	        except IndexError:
+	            print("[!] Error.... Input:\t{0}".format(rgb))
+	        if dbg != 0:
+	            print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
+	        setLights(RED_PIN, r)
+	        setLights(GREEN_PIN, g)
+	        setLights(BLUE_PIN, b)
+	        
 	time.sleep(.001)
 	
 # ----------------
