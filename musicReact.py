@@ -1,9 +1,17 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+####
+# Editted Last on:      2022-07-8
+# Editted Last by:      Paul A. Wortman
+####
+
+#--------------------------------------
+#   BACKGROUND RESEARCH HISTORY
+#--------------------------------------
+
 # Nota Bene: This code is a mashed version fo two previous files (fading.py + sampleVolume.py)
 
-#
  # -----------------------------------------------------
  # File        fading.py
  # Authors     David Ordnung
@@ -27,13 +35,12 @@
  # along with this program. If not, see <http://www.gnu.org/licenses/>
 #
 
-####
-# Editted Last on:      2022-07-8
-# Editted Last by:      Paul A. Wortman
-####
-
+#--------------------------------------
+#       RESEARCH / RESOURCES
+#--------------------------------------
 
 # This script needs running pigpio (http://abyz.co.uk/rpi/pigpio/)
+# Good example of threads (https://python-course.eu/applications-python/pipes-in-python.php)
 
 ## This is an example of a simple sound capture script.
 ##
@@ -73,6 +80,9 @@ BLUE_PIN  = 24
 STEPS     	= 50
 BRIGHT_STEPS	= 5	# Original code default is 1
 
+# Time given between reads from te test conversion file             [   PURPOSE IS FOR TESTING  ]
+test_rgb_wait_time_s    = 0.05
+
 ###### END ######
 
 # ----------------
@@ -80,6 +90,7 @@ BRIGHT_STEPS	= 5	# Original code default is 1
 # ----------------
 dbg = 0
 using_microphone_flag = 0
+test_sleep_flag = 0
 
 #########################################################################
 # ------------------ Import Libraries Section --------------------------#
@@ -167,6 +178,20 @@ if using_microphone_flag:
 #########################################################################
 
 # ----------------
+#  howToUse function: print out the instructions for how to use the tool
+#       Input: None
+#       Output: Instruction on how to use the tool
+#
+#   print ("+ / - = Increase / Decrease brightness")
+#   print ("p / r = Pause / Resume")
+#   print ("s = Change WAV File")
+#   print ("c = Abort Program")
+# ----------------
+def howToUse():
+    # Print out how to use the tool
+    print("--------\tUsage Instructions\t--------\n + / -\t=\tIncrease / Decrease brightness\n p / r\t=\tPause / Resume\n s\t=\tChange WAV File\n c\t=\tAbort Program\n")
+
+# ----------------
 #  updateColor function: updates the color value for a given color variable
 #	Input: color (float varaible), step (int/float variable)
 #	Output: returns int/float for the color variable
@@ -228,6 +253,7 @@ def getCh():
 #  checkKey function:
 #	Input: None
 #	Output: None
+#  Note: Addition of Desire by User to Open a New WAV file
 # ----------------
 def checkKey():
 	# Access the out-of-scope global variables from within this function
@@ -261,7 +287,7 @@ def checkKey():
 			bright = bright - BRIGHT_STEPS
 			print ("Current brightness: %d" % bright)
 		
-		# Scenario where 'p' is hit; pauses code running	
+                # Scenario where 'p' is hit; pauses code running	|   Note: This seems to cause a complete shutdown of the program.... Unable to restart?
 		if c == 'p' and state:
 			state = False
 			print ("Pausing...")
@@ -276,6 +302,15 @@ def checkKey():
 		if c == 'r' and not state:
 			state = True
 			print ("Resuming...")
+
+		if c == 's' and state:
+			if dbg != 0:
+				print("User requested new WAV input")
+			new_wav_file = input("New WAV file: ")
+			if dbg != 1:        # ~!~
+				print("User provided WAV file\t[\t{0}\t]".format(new_wav_file))
+			## TODO: Check that the provided file exists, and pass that file to psynethsia code
+			time.sleep(0.1)
 		
 		# Scenario where 'c' is hit; aborts the code running (by setting the abort variable)
 		if c == 'c' and not abort:
@@ -304,9 +339,11 @@ start_new_thread(checkKey, ())	# Printing is weird because I'm seeing the output
 # ----------------
 #  Prints out the control information to the stdout (e.g. original terminal that the code is being run from)
 # ----------------
-print ("+ / - = Increase / Decrease brightness")
-print ("p / r = Pause / Resume")
-print ("c = Abort Program")
+#print ("+ / - = Increase / Decrease brightness")
+#print ("p / r = Pause / Resume")
+#print ("s = Change WAV File")
+#print ("c = Abort Program")
+howToUse()
 
 # ----------------
 #  Set the starting color brightness values for each GPIO pin on the Pi
@@ -405,6 +442,10 @@ while abort == False:
 	        setLights(RED_PIN, r)
 	        setLights(GREEN_PIN, g)
 	        setLights(BLUE_PIN, b)
+	        if dbg != 0:
+	            print("... Waiting time {0} seconds before next read".format(test_rgb_wait_time_s))
+	        if test_sleep_flag != 0:
+	            time.sleep(test_rgb_wait_time_s)
 	        
 	time.sleep(.001)
 	
