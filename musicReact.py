@@ -103,7 +103,12 @@ import os
 import sys
 import termios
 import tty
-import pigpio
+# Test to see if pi-gpio library is accessible
+try:
+    import pigpio
+    print("[+] Imported the pigpio library")
+except:
+    print("[-] Unable to import the pigpio library")
 import time
 try:
 	from thread import start_new_thread
@@ -113,7 +118,11 @@ except:
 # ----------------
 #  Import of libraries for audio capturing aspect of code (RCA Line In)
 # ----------------
-import alsaaudio, time, audioop
+try:
+    import alsaaudio, time, audioop
+    print("[+] Imported the libraries for audio capturing")
+except:
+    print("[-] Unable to import the libraries for audio capturing")
 
 # ----------------
 #  Import of libraries for converting audio into RGB values
