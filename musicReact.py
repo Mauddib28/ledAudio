@@ -369,9 +369,11 @@ setLights(BLUE_PIN, b)
 # ----------------
 #  Check and setting up for an input file light chaing debugging
 # ----------------
+### TODO: Create a NEW audio-to-rgb.conversion file for this script; improve to a self generated file for testing
 if not using_microphone_flag:
     input_test_filename="audio-to-rgb.conversion"
-    conversion_debugging_input = open(input_test_filename, 'r')
+    #conversion_debugging_input = open(input_test_filename, 'r')     # Improve open() call to create file if not already existant
+    conversion_debugging_input = open(input_test_filename, 'a+')     # Improve open() call to create file if not already existant
     first_time_completed = 0
 
 # ----------------
