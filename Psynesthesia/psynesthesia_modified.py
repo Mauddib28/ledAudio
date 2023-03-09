@@ -17,7 +17,10 @@ import pyaudio              # Import for pyaudio?
 #import pygame               # Import for pygame window
 import wave                 # Import for WAVE file I/O
 import numpy as np          # Import for FFT stuff
-from wavtorgb import *      # Import from rho-bit written code
+try:
+    from wavtorgb import *      # Import from rho-bit written code
+except:
+    from Psynesthesia.wavtorgb import *     # Import from rho-bit written code, using larger run path; should work?
 from math import *          # Import from math libraries
 
 #########################################################################

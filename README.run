@@ -1,0 +1,4 @@
+[*] Commands to Run this
+
+sudo pigpiod
+python3 -i musicReact.py
