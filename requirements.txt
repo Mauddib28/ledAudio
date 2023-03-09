@@ -1,4 +1,4 @@
-certifi==2020.6.20
+certifi>=2022.12.07
 chardet==4.0.0
 colorzero==1.1
 distro==1.5.0
