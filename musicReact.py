@@ -1,9 +1,17 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+####
+# Editted Last on:      2022-07-8
+# Editted Last by:      Paul A. Wortman
+####
+
+#--------------------------------------
+#   BACKGROUND RESEARCH HISTORY
+#--------------------------------------
+
 # Nota Bene: This code is a mashed version fo two previous files (fading.py + sampleVolume.py)
 
-#
  # -----------------------------------------------------
  # File        fading.py
  # Authors     David Ordnung
@@ -27,8 +35,12 @@
  # along with this program. If not, see <http://www.gnu.org/licenses/>
 #
 
+#--------------------------------------
+#       RESEARCH / RESOURCES
+#--------------------------------------
 
 # This script needs running pigpio (http://abyz.co.uk/rpi/pigpio/)
+# Good example of threads (https://python-course.eu/applications-python/pipes-in-python.php)
 
 ## This is an example of a simple sound capture script.
 ##
@@ -68,12 +80,17 @@ BLUE_PIN  = 24
 STEPS     	= 50
 BRIGHT_STEPS	= 5	# Original code default is 1
 
+# Time given between reads from te test conversion file             [   PURPOSE IS FOR TESTING  ]
+test_rgb_wait_time_s    = 0.05
+
 ###### END ######
 
 # ----------------
 #  Debug bit set for outputing debug messages
 # ----------------
 dbg = 0
+using_microphone_flag = 0
+test_sleep_flag = 0
 
 #########################################################################
 # ------------------ Import Libraries Section --------------------------#
@@ -88,7 +105,10 @@ import termios
 import tty
 import pigpio
 import time
-from thread import start_new_thread
+try:
+	from thread import start_new_thread
+except:
+	from _thread import start_new_thread
 
 # ----------------
 #  Import of libraries for audio capturing aspect of code (RCA Line In)
@@ -134,31 +154,47 @@ lstMaxVal = 0
 # ------------------ Audio Capture Set-up ------------------------------#
 #########################################################################
 
-# --------------------------------------------
-#  Code for setting the properties and attributes for capturing the RCA Line In (e.g. audio)
-# --------------------------------------------
-# Open the device in nonblocking capture mode. The last argument could
-# just as well have been zero for blocking mode. Then we could have
-# left out the sleep call in the bottom of the loop
-inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE,alsaaudio.PCM_NONBLOCK)
-
-# Set attributes: Mono, 8000 Hz, 16 bit little endian samples
-inp.setchannels(2)	# 2 for stereo
-inp.setrate(48000)	# Can't be 8000 since that is for telephony (too slow?)
-inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-
-# The period size controls the internal number of frames per period.
-# The significance of this parameter is documented in the ALSA api.
-# For our purposes, it is ufficient to know that reads from the device
-# will return this many frames. Each frame being 2 bytes long.
-# This means that the reads below will return either 320 bytes of data
-# or 0 bytes of data. The latter is possible because we are in nonblocking
-# mode.
-inp.setperiodsize(160)
+if using_microphone_flag:
+    print("[*] Using Microphone as Input")
+    # --------------------------------------------
+    #  Code for setting the properties and attributes for capturing the RCA Line In (e.g. audio)        [ MICROPHONE RECORDING ]
+    # --------------------------------------------
+    # Open the device in nonblocking capture mode. The last argument could
+    # just as well have been zero for blocking mode. Then we could have
+    # left out the sleep call in the bottom of the loop
+    inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE,alsaaudio.PCM_NONBLOCK)
+    
+    # Set attributes: Mono, 8000 Hz, 16 bit little endian samples
+    inp.setchannels(2)	# 2 for stereo
+    inp.setrate(48000)	# Can't be 8000 since that is for telephony (too slow?)
+    inp.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+    
+    # The period size controls the internal number of frames per period.
+    # The significance of this parameter is documented in the ALSA api.
+    # For our purposes, it is ufficient to know that reads from the device
+    # will return this many frames. Each frame being 2 bytes long.
+    # This means that the reads below will return either 320 bytes of data
+    # or 0 bytes of data. The latter is possible because we are in nonblocking
+    # mode.
+    inp.setperiodsize(160)
 
 #########################################################################
 # --------------- Function Definition Section --------------------------#
 #########################################################################
+
+# ----------------
+#  howToUse function: print out the instructions for how to use the tool
+#       Input: None
+#       Output: Instruction on how to use the tool
+#
+#   print ("+ / - = Increase / Decrease brightness")
+#   print ("p / r = Pause / Resume")
+#   print ("s = Change WAV File")
+#   print ("c = Abort Program")
+# ----------------
+def howToUse():
+    # Print out how to use the tool
+    print("--------\tUsage Instructions\t--------\n + / -\t=\tIncrease / Decrease brightness\n p / r\t=\tPause / Resume\n s\t=\tChange WAV File\n c\t=\tAbort Program\n")
 
 # ----------------
 #  updateColor function: updates the color value for a given color variable
@@ -222,6 +258,7 @@ def getCh():
 #  checkKey function:
 #	Input: None
 #	Output: None
+#  Note: Addition of Desire by User to Open a New WAV file
 # ----------------
 def checkKey():
 	# Access the out-of-scope global variables from within this function
@@ -255,7 +292,7 @@ def checkKey():
 			bright = bright - BRIGHT_STEPS
 			print ("Current brightness: %d" % bright)
 		
-		# Scenario where 'p' is hit; pauses code running	
+                # Scenario where 'p' is hit; pauses code running	|   Note: This seems to cause a complete shutdown of the program.... Unable to restart?
 		if c == 'p' and state:
 			state = False
 			print ("Pausing...")
@@ -270,6 +307,15 @@ def checkKey():
 		if c == 'r' and not state:
 			state = True
 			print ("Resuming...")
+
+		if c == 's' and state:
+			if dbg != 0:
+				print("User requested new WAV input")
+			new_wav_file = input("New WAV file: ")
+			if dbg != 1:        # ~!~
+				print("User provided WAV file\t[\t{0}\t]".format(new_wav_file))
+			## TODO: Check that the provided file exists, and pass that file to psynethsia code
+			time.sleep(0.1)
 		
 		# Scenario where 'c' is hit; aborts the code running (by setting the abort variable)
 		if c == 'c' and not abort:
@@ -298,9 +344,11 @@ start_new_thread(checkKey, ())	# Printing is weird because I'm seeing the output
 # ----------------
 #  Prints out the control information to the stdout (e.g. original terminal that the code is being run from)
 # ----------------
-print ("+ / - = Increase / Decrease brightness")
-print ("p / r = Pause / Resume")
-print ("c = Abort Program")
+#print ("+ / - = Increase / Decrease brightness")
+#print ("p / r = Pause / Resume")
+#print ("s = Change WAV File")
+#print ("c = Abort Program")
+howToUse()
 
 # ----------------
 #  Set the starting color brightness values for each GPIO pin on the Pi
@@ -308,6 +356,14 @@ print ("c = Abort Program")
 setLights(RED_PIN, r)
 setLights(GREEN_PIN, g)
 setLights(BLUE_PIN, b)
+
+# ----------------
+#  Check and setting up for an input file light chaing debugging
+# ----------------
+if not using_microphone_flag:
+    input_test_filename="audio-to-rgb.conversion"
+    conversion_debugging_input = open(input_test_filename, 'r')
+    first_time_completed = 0
 
 # ----------------
 #  While loop for constantly changing the RGB mix (e.g. LED display color) constantly over time.
@@ -345,27 +401,65 @@ while abort == False:
 	# ----------------
 	#  While loop chunk for reading from the RCA Line In
 	# ----------------
-	# Read data from device
-	# Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
-	l,data = inp.read()	
-	if dbg != 0:
-		print ("Value of l:" + str(l))
-		print ("Value of data:" + str(data))
-	if l < 0:
-		continue
-	elif l == 0:
-		continue
-	elif l:
-		# Return the maximum of the absolute value of all samples in a fragment.
-		#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
-		#print ("Something Cool")
-		curMaxVal = audioop.max(data, 2)
+	# Read data from device / input
+	if using_microphone_flag:
+	    if dgb != 0:
+	        print("[*] Using the Microphone to Update the Colors (??)")
+	    # Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
+	    l,data = inp.read()	
+	    if dbg != 0:
+	    	print ("Value of l:" + str(l))
+	    	print ("Value of data:" + str(data))
+	    if l < 0:
+	    	continue
+	    elif l == 0:
+	    	continue
+	    elif l:
+	    	# Return the maximum of the absolute value of all samples in a fragment.
+	    	#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
+	    	#print ("Something Cool")
+	    	curMaxVal = audioop.max(data, 2)
+	# Read input from the debugging file
+	else:
+	    if dbg != 0:
+	        print("[*] Reading line from input file\n")
+	    rgb = conversion_debugging_input.readline()
+	    if rgb == "Red\tGreen\tBlue\n":
+	        if dbg != 0:
+	            print("... Header file.... Ignoring\n")
+	    elif len(rgb) == 0:
+	        if first_time_completed != 1:
+	            if dbg != 1:        # ~!~
+	                print("[+] Completed Read through Input File")
+	            first_time_completed = 1
+	        #else:
+	            #first_time_completed = 1
+	    else:
+	        rgb_parsed = rgb.strip().split('\t')
+	        try:
+	            r = rgb_parsed[0]
+	            g = rgb_parsed[1]
+	            b = rgb_parsed[2]
+	        except IndexError:
+	            print("[!] Error.... Input:\t{0}".format(rgb))
+	        if dbg != 0:
+	            print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
+	        setLights(RED_PIN, r)
+	        setLights(GREEN_PIN, g)
+	        setLights(BLUE_PIN, b)
+	        if dbg != 0:
+	            print("... Waiting time {0} seconds before next read".format(test_rgb_wait_time_s))
+	        if test_sleep_flag != 0:
+	            time.sleep(test_rgb_wait_time_s)
+	        
 	time.sleep(.001)
 	
 # ----------------
 #  Prints out the message "Aborting..." to stdout
 # ----------------
 print ("Aborting...")
+if not using_microphone_flag:
+    conversion_debugging_input.close()
 
 # ----------------
 #  Set all the color GPIO pins to 0 for turning them off at the end of the program
