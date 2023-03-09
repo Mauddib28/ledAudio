@@ -19,3 +19,8 @@ arecord -D hw:0,0 -f DAT my_record.wav
 play track.wav stat -freq
 	-> calculates the input's power spectrum (4096 point DFT) instead of the statictics normally done
 
+
+### Resources
+
+# How to wire Raspi LEDs
+https://dordnung.de/raspberrypi-ledstrip/

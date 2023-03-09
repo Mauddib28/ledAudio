@@ -95,6 +95,11 @@ from thread import start_new_thread
 # ----------------
 import alsaaudio, time, audioop
 
+# ----------------
+#  Import of libraries for converting audio into RGB values
+# ----------------
+import Psynesthesia.psynesthesia_modified
+
 #########################################################################
 # -------------------- LED Control Set-up ------------------------------#
 #########################################################################
