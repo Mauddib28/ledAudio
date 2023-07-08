@@ -92,6 +92,9 @@ dbg = 0
 using_microphone_flag = 0
 test_sleep_flag = 0
 
+# Bit used for tracking if running on a Raspi or not
+raspi_os = None
+
 #########################################################################
 # ------------------ Import Libraries Section --------------------------#
 #########################################################################
@@ -103,12 +106,21 @@ import os
 import sys
 import termios
 import tty
-# Test to see if pi-gpio library is accessible
-try:
-    import pigpio
-    print("[+] Imported the pigpio library")
-except:
-    print("[-] Unable to import the pigpio library")
+# Check to see what kind of system the code is running on
+import os
+if os.uname()[4][:3] == 'arm':
+    raspi_os = 1
+    print("[+] Running on Raspi OS (ARM)")
+    # Test to see if pi-gpio library is accessible
+    try:
+        import pigpio
+        print("[+] Imported the pigpio library")
+    except:
+        print("[-] Unable to import the pigpio library")
+else:
+    raspi_os = 0
+    print("[-] Not running on ARM OS")
+    print("[-] The pigpio library was not loaded")
 import time
 try:
 	from thread import start_new_thread
@@ -151,7 +163,21 @@ state = True
 # ----------------
 #  pi accesses the local Pi's GPIO
 # ----------------
-pi = pigpio.pi()
+if raspi_os != 0:
+    pi = pigpio.pi()
+else:
+    pi = None
+    # Use fake class and functions?
+    class pi_fake:
+        pass
+        
+        def set_PWM_dutycycle(pin, realBrightness):
+            pass
+
+        def stop():
+            pass
+
+    pi = pi_fake
 
 # ----------------
 #  Set variable to volume based brightness changing
@@ -304,7 +330,7 @@ def checkKey():
                 # Scenario where 'p' is hit; pauses code running	|   Note: This seems to cause a complete shutdown of the program.... Unable to restart?
 		if c == 'p' and state:
 			state = False
-			print ("Pausing...")
+			print ("Pausing...\n")
 			
 			time.sleep(0.1)
 			# Set all color pin brightness to zero (turn off colors)
@@ -319,10 +345,10 @@ def checkKey():
 
 		if c == 's' and state:
 			if dbg != 0:
-				print("User requested new WAV input")
+				print("User requested new WAV input\n")
 			new_wav_file = input("New WAV file: ")
 			if dbg != 1:        # ~!~
-				print("User provided WAV file\t[\t{0}\t]".format(new_wav_file))
+				print("User provided WAV file\t[\t{0}\t]\n".format(new_wav_file))
 			## TODO: Check that the provided file exists, and pass that file to psynethsia code
 			time.sleep(0.1)
 		
@@ -413,12 +439,12 @@ while abort == False:
 	# Read data from device / input
 	if using_microphone_flag:
 	    if dgb != 0:
-	        print("[*] Using the Microphone to Update the Colors (??)")
+	        print("[*] Using the Microphone to Update the Colors (??)\n")
 	    # Note: In PCM_NONBLOCK mode, the call will not block, but WILL return (0,'') if no new period has become available since the last call
 	    l,data = inp.read()	
 	    if dbg != 0:
-	    	print ("Value of l:" + str(l))
-	    	print ("Value of data:" + str(data))
+	    	print ("Value of l:" + str(l) + "\n")
+	    	print ("Value of data:" + str(data) + "\n")
 	    if l < 0:
 	    	continue
 	    elif l == 0:
@@ -439,7 +465,7 @@ while abort == False:
 	    elif len(rgb) == 0:
 	        if first_time_completed != 1:
 	            if dbg != 1:        # ~!~
-	                print("[+] Completed Read through Input File")
+	                print("[+] Completed Read through Input File\n")
 	            first_time_completed = 1
 	        #else:
 	            #first_time_completed = 1
@@ -450,14 +476,14 @@ while abort == False:
 	            g = rgb_parsed[1]
 	            b = rgb_parsed[2]
 	        except IndexError:
-	            print("[!] Error.... Input:\t{0}".format(rgb))
+	            print("[!] Error.... Input:\t{0}\n".format(rgb))
 	        if dbg != 0:
 	            print("... Debug - RGB:\t{0}\n\tRed:\t{1}\n\tGreen:\t{2}\n\tBlue:\t{3}\n".format(rgb_parsed, r, g, b))
 	        setLights(RED_PIN, r)
 	        setLights(GREEN_PIN, g)
 	        setLights(BLUE_PIN, b)
 	        if dbg != 0:
-	            print("... Waiting time {0} seconds before next read".format(test_rgb_wait_time_s))
+	            print("... Waiting time {0} seconds before next read\n".format(test_rgb_wait_time_s))
 	        if test_sleep_flag != 0:
 	            time.sleep(test_rgb_wait_time_s)
 	        
@@ -466,7 +492,7 @@ while abort == False:
 # ----------------
 #  Prints out the message "Aborting..." to stdout
 # ----------------
-print ("Aborting...")
+print ("Aborting...\n")
 if not using_microphone_flag:
     conversion_debugging_input.close()
 

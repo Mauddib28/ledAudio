@@ -14,10 +14,22 @@
 #  Import of libraries for intaking a .WAV file and converting frequencies to colors
 # ----------------
 import pyaudio              # Import for pyaudio?
-#import pygame               # Import for pygame window
+# Testing for pygame library existing on the target system
+try:
+    import pygame               # Import for pygame window
+    pygame_testing = 0
+except:
+    print("[-] Did not load the pygame library")
+    pygame_testing = 1
 import wave                 # Import for WAVE file I/O
 import numpy as np          # Import for FFT stuff
-from wavtorgb import *      # Import from rho-bit written code
+# Attempt to import the wavtorgb functionality based on where this script is getting called
+try:
+    from wavtorgb import *      # Import from rho-bit written code
+    print("[*] Importing wavtorgb locally")
+except:
+    from Psynesthesia.wavtorgb import *     # Import from rho-bit written code
+    print("[*] Importing wavtorgb from Psynesthesia")
 from math import *          # Import from math libraries
 
 #########################################################################
@@ -50,8 +62,9 @@ def request__input_wav_file():
     # Request the file name of the WAV file
     raw = input("WAV file name?: ")
     #Starts Pygame and opens the screen 
-    #pygame.init()
-    #screen = pygame.display.set_mode((800, 800))
+    if pygame_testing != 0:
+        pygame.init()
+        screen = pygame.display.set_mode((800, 800))
     return raw
 
 ## Function for Openning the PyAudio stream for use in this script
@@ -73,7 +86,7 @@ def open__pyaudio_stream(p, wf, RATE):
 #                input = True)
 
 ## Function for Performing Audio-to-RGB Conversion to an Output File    -   NOTE: NO AUDIO OUTPUT                   [   PURPOSE IS FOR TESTING  ]
-def create_and_exploit__audio_to_rgb(testOutput_conversionFile, wf, RATE, chunk, swidth, window, thefreq, stream):
+def create_and_exploit__audio_to_rgb(testOutput_conversionFile, wf, RATE, chunk, swidth, window, thefreq, stream, background=None):
     print("[*] Reading the first chunk of data")
     # read the incoming data
     data = wf.readframes(chunk)
@@ -117,7 +130,8 @@ def create_and_exploit__audio_to_rgb(testOutput_conversionFile, wf, RATE, chunk,
             rgb = wavelen2rgb(nm, MaxIntensity=255)
             print("the colors for this nm are: "+str(rgb))
             #Fills the background with the appropriate colot, does this so fast, it creates a "fading effect" in between colors
-            #background.fill((rgb[0],rgb[1],rgb[2]))
+            if pygame_testing != 0:
+                background.fill((rgb[0],rgb[1],rgb[2]))
             # Debug output for checking result of 'rgb' variable (return from wavelen2rgb)
             if debugBit != 1:       # ~!~
                 print("[+] Colors Generated:\t{0}\n\tColor 0 (Red):\t\t{1}\n\tColor 1 (Green):\t{2}\n\tColor 2 (Blue):\t\t{3}".format(rgb, rgb[0], rgb[1], rgb[2]))
@@ -126,10 +140,11 @@ def create_and_exploit__audio_to_rgb(testOutput_conversionFile, wf, RATE, chunk,
                 conversion_line = "{0}\t{1}\t{2}\n".format(rgb[0], rgb[1], rgb[2])
                 conversion_output.writelines(conversion_line)
                 conversion_output.close()
-            #"blits" (renders) the color to the background
-            #screen.blit(background, (0, 0))
-            #and finally displays the background
-            #pygame.display.flip()
+            if pygame_testing != 0:
+                #"blits" (renders) the color to the background
+                screen.blit(background, (0, 0))
+                #and finally displays the background
+                pygame.display.flip()
     	
         print("\tReading Next chunk of Data")	
         # read some more data
@@ -156,8 +171,9 @@ def audio_to_rgb__mode__conversion_test_file(test_conversion_file):
     window = np.blackman(chunk)
     # open the stream
     p = pyaudio.PyAudio()
-    #background = pygame.Surface(screen.get_size())
-    #background = background.convert()
+    if pygame_testing != 0:
+        background = pygame.Surface(screen.get_size())
+        background = background.convert()
     
     thefreq = 1.0
     #global thefreq
@@ -172,7 +188,10 @@ def audio_to_rgb__mode__conversion_test_file(test_conversion_file):
     create__audio_to_rgb_conversion_file(test_conversion_file)
     
     # Perform Audio-to-RGB Conversion - Specifically writing the result to an output file                               [   PURPOSE IS FOR TESTING  ]
-    create_and_exploit__audio_to_rgb(test_conversion_file, wf, RATE, chunk, swidth, window, thefreq, stream)
+    if pygame_testing != 0:
+        create_and_exploit__audio_to_rgb(test_conversion_file, wf, RATE, chunk, swidth, window, thefreq, stream, background)
+    else:
+        create_and_exploit__audio_to_rgb(test_conversion_file, wf, RATE, chunk, swidth, window, thefreq, stream)
     
     ## TODO: Create an Audio-to-RGB 
     
@@ -183,7 +202,7 @@ def audio_to_rgb__mode__conversion_test_file(test_conversion_file):
     print("[+] Terminating Psynetheia Modified Script")
 
 ## Function for Performing Audio-to-RGB Conversion to a PIPE File
-def create_and_exploit__audio_to_rgb__output_pipe(output_conversion_pipe, wf, RATE, chunk, swidth, window, thefreq, stream):
+def create_and_exploit__audio_to_rgb__output_pipe(output_conversion_pipe, wf, RATE, chunk, swidth, window, thefreq, stream, background=None):
     print("[*] Reading the first chunk of data")
     # read the incoming data
     data = wf.readframes(chunk)
@@ -227,7 +246,8 @@ def create_and_exploit__audio_to_rgb__output_pipe(output_conversion_pipe, wf, RA
             rgb = wavelen2rgb(nm, MaxIntensity=255)
             print("the colors for this nm are: "+str(rgb))
             #Fills the background with the appropriate colot, does this so fast, it creates a "fading effect" in between colors
-            #background.fill((rgb[0],rgb[1],rgb[2]))
+            if pygame_testing != 0:
+                background.fill((rgb[0],rgb[1],rgb[2]))
             # Debug output for checking result of 'rgb' variable (return from wavelen2rgb)
             if debugBit != 1:       # ~!~
                 print("[+] Colors Generated:\t{0}\n\tColor 0 (Red):\t\t{1}\n\tColor 1 (Green):\t{2}\n\tColor 2 (Blue):\t\t{3}".format(rgb, rgb[0], rgb[1], rgb[2]))
@@ -236,10 +256,11 @@ def create_and_exploit__audio_to_rgb__output_pipe(output_conversion_pipe, wf, RA
                 conversion_line = "{0}\t{1}\t{2}\n".format(rgb[0], rgb[1], rgb[2])
                 conversion_output.writelines(conversion_line)
                 conversion_output.close()
-            #"blits" (renders) the color to the background
-            #screen.blit(background, (0, 0))
-            #and finally displays the background
-            #pygame.display.flip()
+            if pygame_testing != 0:
+                #"blits" (renders) the color to the background
+                screen.blit(background, (0, 0))
+                #and finally displays the background
+                pygame.display.flip()
     	
         print("\tReading Next chunk of Data")	
         # read some more data
@@ -266,8 +287,9 @@ def audio_to_rgb__mode__conversion_pipe_output(test_conversion_pipe):
     window = np.blackman(chunk)
     # open the stream
     p = pyaudio.PyAudio()
-    #background = pygame.Surface(screen.get_size())
-    #background = background.convert()
+    if pygame_testing != 0:
+        background = pygame.Surface(screen.get_size())
+        background = background.convert()
     
     thefreq = 1.0
     #global thefreq
@@ -282,7 +304,10 @@ def audio_to_rgb__mode__conversion_pipe_output(test_conversion_pipe):
     create__audio_to_rgb_conversion_file(test_conversion_pipe)
     
     # Perform Audio-to-RGB Conversion - Specifically writing the result to an output file                               [   PURPOSE IS FOR TESTING  ]
-    create_and_exploit__audio_to_rgb(test_conversion_pipe, wf, RATE, chunk, swidth, window, thefreq, stream)
+    if pygame_testing != 0:
+        create_and_exploit__audio_to_rgb(test_conversion_pipe, wf, RATE, chunk, swidth, window, thefreq, stream, background)
+    else:
+        create_and_exploit__audio_to_rgb(test_conversion_pipe, wf, RATE, chunk, swidth, window, thefreq, stream)
     
     ## TODO: Create an Audio-to-RGB 
     
