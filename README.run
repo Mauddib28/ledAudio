@@ -1,0 +1,12 @@
+[*] Commands to Run this
+
+sudo pigpiod
+python3 -i musicReact.py
+
+## Running the Psynesthesia code      
+  480  cd Documents/ledAudio/
+  481  echo "testWavs/africa-toto.wav" | python3 Psynesthesia/psynesthesia_modified.py
+  482  wget https://www.ee.columbia.edu/~dpwe/sounds/music/around_the_world-atc.wav -O testWavs/around_the_world-atc.wav
+  483  echo "testWavs/around_the_world-atc.wav" | python3 Psynesthesia/psynesthesia_modified.py && echo "testWavs/dont_speak-no_doubt.wav" | python3 Psynesthesia/psynesthesia_modified.py
+  484  echo "testWavs/around_the_world-atc.wav" | python3 Psynesthesia/psynesthesia_modified.py
+

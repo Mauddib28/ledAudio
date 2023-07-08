@@ -23,6 +23,7 @@ except:
     pygame_testing = 1
 import wave                 # Import for WAVE file I/O
 import numpy as np          # Import for FFT stuff
+<<<<<<< HEAD
 # Attempt to import the wavtorgb functionality based on where this script is getting called
 try:
     from wavtorgb import *      # Import from rho-bit written code
@@ -30,6 +31,12 @@ try:
 except:
     from Psynesthesia.wavtorgb import *     # Import from rho-bit written code
     print("[*] Importing wavtorgb from Psynesthesia")
+=======
+try:
+    from wavtorgb import *      # Import from rho-bit written code
+except:
+    from Psynesthesia.wavtorgb import *     # Import from rho-bit written code, using larger run path; should work?
+>>>>>>> 6067b7d5907624bb3624d2bd38e4bb074e87338c
 from math import *          # Import from math libraries
 
 #########################################################################
