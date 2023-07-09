@@ -1,4 +1,5 @@
 # PiCockpit.com
+## Note: This code functions an an RX/TX channel between two devices
 
 import bluetooth
 import random

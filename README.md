@@ -28,3 +28,6 @@ https://www.ee.columbia.edu/~dpwe/sounds/music/
 
 # How to wire Raspi LEDs
 https://dordnung.de/raspberrypi-ledstrip/
+
+# Examples of MicroPython Bluetooth Examples
+https://github.com/micropython/micropython/tree/master/examples/bluetooth
