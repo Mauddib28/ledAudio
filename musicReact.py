@@ -454,7 +454,7 @@ while abort == False:
 	    	#print (audioop.max(data, 2))	# Note: Print causes problems with additional tabs added
 	    	#print ("Something Cool")
 	    	curMaxVal = audioop.max(data, 2)
-	# Read input from the debugging file
+	# Read input from the debugging file; used as the audio-to-rbg conversion file
 	else:
 	    if dbg != 0:
 	        print("[*] Reading line from input file\n")
