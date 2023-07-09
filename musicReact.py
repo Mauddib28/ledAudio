@@ -94,6 +94,52 @@ test_sleep_flag = 0
 
 # Bit used for tracking if running on a Raspi or not
 raspi_os = None
+pico_w_os = None
+
+# ----------------
+#  Configuration and Imports for Base OS being Run on (e.g. Raspi B, Pico W, Unix)
+# ----------------
+
+# Check to see what kind of system the code is running on
+import os
+if os.uname()[4][:3] == 'arm':
+    raspi_os = 1
+    print("[+] Running on Raspi OS (ARM)")
+    # Test to see if pi-gpio library is accessible
+    try:
+        import pigpio
+        print("[+] Imported the pigpio library")
+    except:
+        print("[-] Unable to import the pigpio library")
+elif "Pico W" in os.uname()[4]:
+    pico_w_os = 1
+    print("[+] Running on a Raspi Pico-W")
+    from machine import Pin, PWM
+    ## NOTE: Pico-W SPECIFIC CONFIGURAITON - CHANGE HERE ##
+    RED_PIN = 17
+    GREEN_PIN = 22
+    BLUE_PIN = 16
+    pwm_freq = 1000
+    # Configure the pins to be used later in the code
+    red_led = Pin(17, mode=Pin.OUT)
+    green_led = Pin(22, mode=Pin.OUT)
+    blue_led = Pin(16, mode=Pin.OUT)
+    pwm__red_led = PWM(red_led)
+    pwm__green_led = PWM(green_led)
+    pwm__blue_led = PWM(blue_led)
+    pwm__red_led.freq(pwm_freq)
+    pwm__green_led.freq(pwm_freq)
+    pwm__blue_led.freq(pwm_freq)
+    # Set the RED/GREEN/BLUE pin variables to the pwm representations of this GPIO interface
+    RED_PIN = pwm__red_led
+    GREEN_PIN = pwm__green_led
+    BLUE_PIN = pwm__blue_led
+else:
+    raspi_os = 0
+    pico_w_os = 0
+    print("[-] Not running on ARM OS")
+    print("[-] The pigpio library was not loaded")
+
 
 #########################################################################
 # ------------------ Import Libraries Section --------------------------#
@@ -106,21 +152,7 @@ import os
 import sys
 import termios
 import tty
-# Check to see what kind of system the code is running on
-import os
-if os.uname()[4][:3] == 'arm':
-    raspi_os = 1
-    print("[+] Running on Raspi OS (ARM)")
-    # Test to see if pi-gpio library is accessible
-    try:
-        import pigpio
-        print("[+] Imported the pigpio library")
-    except:
-        print("[-] Unable to import the pigpio library")
-else:
-    raspi_os = 0
-    print("[-] Not running on ARM OS")
-    print("[-] The pigpio library was not loaded")
+
 import time
 try:
 	from thread import start_new_thread
@@ -257,10 +289,16 @@ def updateColor(color, step):
 #	Output: None
 # ----------------
 def setLights(pin, brightness):
-	# Will return a value between 255 to 0 (int() helps with the (1/255) case = 0)
-	realBrightness = int(int(brightness) * (float(bright) / 255.0))
-	# Starts (non-zero dutycycle) or stops (0) PWM pulses on the GPIO
-	pi.set_PWM_dutycycle(pin, realBrightness)
+    if pico_w_os != 0:
+        # Will return a value between 65025 to 0 with scoping to try and provide a range
+        realBrightness = int(int(brightness) * (float(65025 / 255.0)))
+        # Uses the duty_u16 function to provide PWM control on the Pico-W GPIO
+        pin.duty_u16(realBrightness)
+    else:
+	    # Will return a value between 255 to 0 (int() helps with the (1/255) case = 0)
+	    realBrightness = int(int(brightness) * (float(bright) / 255.0))
+	    # Starts (non-zero dutycycle) or stops (0) PWM pulses on the GPIO
+	    pi.set_PWM_dutycycle(pin, realBrightness)
 
 # ----------------
 #  getCh function: obtains and returns a single character (i.e. byte) from stdin
