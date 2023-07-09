@@ -150,7 +150,11 @@ else:
 # ----------------
 import os
 import sys
-import termios
+try:
+    import termios
+    print("[+] Imported termios library")
+except:
+    print("[-] Unable to import the termios library")
 import tty
 
 import time
