@@ -155,7 +155,11 @@ try:
     print("[+] Imported termios library")
 except:
     print("[-] Unable to import the termios library")
-import tty
+try:
+    import tty
+    print("[+] Imported tty library")
+except:
+    print("[-] Unable to import the tty library")
 
 import time
 try:
