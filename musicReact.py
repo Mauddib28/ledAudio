@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 ####
-# Editted Last on:      2022-07-8
+# Editted Last on:      2023-07-08
 # Editted Last by:      Paul A. Wortman
 ####
 
@@ -80,7 +80,7 @@ BLUE_PIN  = 24
 STEPS     	= 50
 BRIGHT_STEPS	= 5	# Original code default is 1
 
-# Time given between reads from the test conversion file             [   PURPOSE IS FOR TESTING  ]
+# Time given between reads from te test conversion file             [   PURPOSE IS FOR TESTING  ]
 test_rgb_wait_time_s    = 0.05
 
 ###### END ######
@@ -397,9 +397,7 @@ setLights(BLUE_PIN, b)
 # ----------------
 if not using_microphone_flag:
     input_test_filename="audio-to-rgb.conversion"
-    #conversion_debugging_input = open(input_test_filename, 'r')     # Improve open() call to create file if not already existant
-    ### Create a NEW audio-to-rgb.conversion file for this script; improve to a self generated file for testing
-    conversion_debugging_input = open(input_test_filename, 'a+')     # Improve open() call to create file if not already existant
+    conversion_debugging_input = open(input_test_filename, 'r')
     first_time_completed = 0
 
 # ----------------

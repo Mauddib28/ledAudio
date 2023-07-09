@@ -10,3 +10,9 @@ python3 -i musicReact.py
   483  echo "testWavs/around_the_world-atc.wav" | python3 Psynesthesia/psynesthesia_modified.py && echo "testWavs/dont_speak-no_doubt.wav" | python3 Psynesthesia/psynesthesia_modified.py
   484  echo "testWavs/around_the_world-atc.wav" | python3 Psynesthesia/psynesthesia_modified.py
 
+## Exact Steps and Documentation for running the code
+#	1)	Begin the Psynthesia Code; which will create the audio-to-rgb file
+testFile = "/home/duncan/Documents/LifeShit/Projects/RaspiFun/ledAudio/testWavs/i_ran_so_far_away-flock_of_seagulls.wav"
+echo "$testfile" | python3 Psynesthesia/psynesthesia_modified.py
+#	2)	Start up the Music Reaction (i.e. LED Lights) Code; which will read from the audio-to-rgb file
+python3 ./musicReact.py
