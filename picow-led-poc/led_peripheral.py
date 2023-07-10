@@ -6,6 +6,16 @@
 # Edited by:		Paul Wortman	-	2023/07/09
 ###
 
+## Alteration History
+# Added print statements for tracking interaction
+# Added additional IRQ events + resource URL
+
+## TODO:
+#	[ ] Additional functions for BLE
+#	[ ] Have "backside" operations from BLE Characteristics
+#	[ ] Add UUIDs
+#	[ ] Make changes to the GAP service
+
 import bluetooth
 import random
 import struct
@@ -18,24 +28,35 @@ from micropython import const
 # Debugging
 dbg = 0
 
+# Setting constants for the IRQ (i.e. response aspects) with GATT
 _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
 _IRQ_GATTS_WRITE = const(3)
+_IRQ_SCAN_RESULT = const(5)
+_IRQ_SCAN_DONE = const(6)
+# Note: The above come from the micropython bluetooth library documentation
+#	- URL:		http://docs.micropython.org/en/latest/library/bluetooth.html
 
+# Configuring the Flags for use with Bluetooth LE
 _FLAG_READ = const(0x0002)
 _FLAG_WRITE_NO_RESPONSE = const(0x0004)
 _FLAG_WRITE = const(0x0008)
 _FLAG_NOTIFY = const(0x0010)
 
+## Note: All the UUIDs below are the same; because they are all part of the same service (???)
+# Setting the UUID and BLE Flags for the larger UART Service/Characteristic
 _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+# Setting the UUID and BLE Flags for the UART TX Service/Characteristic
 _UART_TX = (
     bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"),
     _FLAG_READ | _FLAG_NOTIFY,
 )
+# Setting the UUID and BLE Flags for the UART RX Service/Characteristic
 _UART_RX = (
     bluetooth.UUID("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"),
     _FLAG_WRITE | _FLAG_WRITE_NO_RESPONSE,
 )
+# Configuring the actual BLE GATT UART Service
 _UART_SERVICE = (
     _UART_UUID,
     (_UART_TX, _UART_RX),
@@ -78,7 +99,6 @@ class BLESimplePeripheral:
             value = self._ble.gatts_read(value_handle)
             if value_handle == self._handle_rx and self._write_callback:
                 self._write_callback(value)
-        '''
         # A single scan result; NOTE: This event is not defined
         elif event == _IRQ_SCAN_RESULT:
             print("[*] Single Scan Result:")
@@ -88,7 +108,6 @@ class BLESimplePeripheral:
         elif event == _IRQ_SCAN_DONE:
             print("[*] IRQ Scan Completed OR Stopped")
             pass
-        '''
 
     def send(self, data):
         # Iterate through each connected device
@@ -110,6 +129,7 @@ class BLESimplePeripheral:
     # Internal function for having a callback after a write occurs
     def on_write(self, callback):
         self._write_callback = callback
+        # Nota Bene: Through testing was found that at most 21 characters can be received by a write
 
 
 def demo():
