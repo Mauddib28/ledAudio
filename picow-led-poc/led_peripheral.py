@@ -36,12 +36,18 @@ _IRQ_SCAN_RESULT = const(5)
 _IRQ_SCAN_DONE = const(6)
 # Note: The above come from the micropython bluetooth library documentation
 #	- URL:		http://docs.micropython.org/en/latest/library/bluetooth.html
+## Added more IRQ for Notify and Indicate Events
+_IRQ_GATTC_NOTIFY = const(18)
+_IRQ_GATTC_INDICATE = const(19)
+_IRQ_GATTS_INDICATE_DONE = const(20)
 
 # Configuring the Flags for use with Bluetooth LE
 _FLAG_READ = const(0x0002)
 _FLAG_WRITE_NO_RESPONSE = const(0x0004)
 _FLAG_WRITE = const(0x0008)
 _FLAG_NOTIFY = const(0x0010)
+# Addition of the indicate flag
+_FLAG_INDICATE = const(0x0020)
 
 ## Note: All the UUIDs below are the same; because they are all part of the same service (???)
 # Setting the UUID and BLE Flags for the larger UART Service/Characteristic
@@ -50,6 +56,8 @@ _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
 _UART_TX = (
     bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"),
     _FLAG_READ | _FLAG_NOTIFY,
+    # Adding Indicate flag to the TX service
+    #_FLAG_READ | _FLAG_NOTIFY | _FLAG_INDICATE,
 )
 # Setting the UUID and BLE Flags for the UART RX Service/Characteristic
 _UART_RX = (
@@ -108,6 +116,21 @@ class BLESimplePeripheral:
         elif event == _IRQ_SCAN_DONE:
             print("[*] IRQ Scan Completed OR Stopped")
             pass
+        ## Added events for Notifications and Indications
+        elif event == _IRQ_GATTC_NOTIFY:
+            # A server has sent a notify request.
+            conn_handle, value_handle, notify_data = data
+            print("[!] Notify Event has Occured!\n\tConnection Handle:\t{0}\n\tValue Handle:\t{1}\n\tNotify Data:\t{2}".format(conn_handle, value_handle, notify_data))
+        elif event == _IRQ_GATTC_INDICATE:
+            # A server has sent an indicate request.
+            conn_handle, value_handle, notify_data = data
+            print("[!] Indicate Event has Occured!\n\tConnection Handle:\t{0}\n\tValue Handle:\t{1}\n\tNofiy Data:\t{2}".format(conn_handle, value_handle, notify_data))
+        elif event == _IRQ_GATTS_INDICATE_DONE:
+            # A client has acknowledged the indication.
+            # Note: Status will be zero on successful acknowledgment, implementation-specific value otherwise.
+            conn_handle, value_handle, status = data
+            print("[!] Indicate Event is Done!\n\tConnection Handle:\t{0}\n\tValue Handle:\t{1}\n\tStatus:\t{2}".format(conn_handle, value_handle, status))
+
 
     def send(self, data):
         # Iterate through each connected device
