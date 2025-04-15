@@ -82,10 +82,9 @@ You can create a custom `config.yaml` file to configure the system:
 
 ```yaml
 audio:
-  input_source: "auto"  # "auto", "microphone", "file", or specific path
+  input_source: default
   sample_rate: 44100
-  channels: 2
-  chunk_size: 2048
+  chunk_size: 1024
 
 processing:
   fft_enabled: true
@@ -94,9 +93,10 @@ processing:
   smoothing: 0.5
 
 visual:
-  output_method: "auto"  # "auto", "leds", "file", "display"
-  color_mode: "colorful"  # "spectrum", "intensity", "colorful", "custom"
+  output_method: display  # Use 'display' for visualization, 'leds' for actual LEDs
+  color_mode: colorful
   brightness: 255
+  led_count: 60
 
 hardware:
   led_type: "auto"
@@ -121,3 +121,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Based on original work from:
   - musicReact.py by David Ordnung and Paul A. Wortman
   - psynesthesia_modified.py by rho-bit 
+
+## Additional Information:
