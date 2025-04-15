@@ -1,0 +1,19 @@
+# Task 2: Develop LED Control System
+
+## Description
+Build system to control LED strips with different patterns
+
+## Details
+Create LED driver module, pattern generators, and mapping between audio features and visual parameters.
+
+## Priority
+high
+
+## Status
+todo
+
+## Dependencies
+1
+
+## Test Strategy
+Test patterns with mock audio input, verify timing and responsiveness
