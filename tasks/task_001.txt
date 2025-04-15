@@ -1,0 +1,19 @@
+# Task 1: Implement Audio Input Processing
+
+## Description
+Capture and process audio input from microphone or line-in
+
+## Details
+Create modules for audio capture, FFT analysis, and feature extraction. Support both microphone and line-in inputs.
+
+## Priority
+high
+
+## Status
+todo
+
+## Dependencies
+None
+
+## Test Strategy
+Unit tests for audio processing functions, manual testing with sample audio files
