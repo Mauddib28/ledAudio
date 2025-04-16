@@ -373,15 +373,14 @@ class Application:
         logger.info(f"Input source selected: {source}")
         
         if source == 'custom_file':
-            # In a real implementation, this would open a file dialog
-            # For now, we'll just prompt in the console
-            print("\nEnter path to audio file:")
-            file_path = input().strip()
+            # Open a file dialog within the GUI
+            file_path = self._open_file_dialog()
             
-            if os.path.isfile(file_path):
+            if file_path and os.path.isfile(file_path):
                 source = file_path
             else:
-                logger.error(f"File not found: {file_path}")
+                # If file dialog was cancelled or invalid file, return to input selection
+                logger.warning("File selection cancelled or invalid file selected")
                 return
         
         # Set up the audio input
@@ -414,6 +413,427 @@ class Application:
             self._setup_ui()
         else:
             logger.error(f"Failed to set up input source: {source}")
+            # Add a user-visible error message in the GUI
+            self._show_error_message(f"Failed to use {source} as input source")
+
+    def _open_file_dialog(self):
+        """Open a file dialog to select an audio file.
+        
+        Returns:
+            str or None: Path to selected file, or None if cancelled
+        """
+        try:
+            # Try to use tkinter for file dialog (more robust than pygame's)
+            import tkinter as tk
+            from tkinter import filedialog
+            
+            # Hide the main tkinter window
+            root = tk.Tk()
+            root.withdraw()
+            
+            # Open the file dialog
+            file_types = [
+                ('Audio Files', '*.wav *.mp3 *.ogg'),
+                ('WAV Files', '*.wav'),
+                ('MP3 Files', '*.mp3'),
+                ('OGG Files', '*.ogg'),
+                ('All Files', '*.*')
+            ]
+            
+            file_path = filedialog.askopenfilename(
+                title="Select Audio File",
+                filetypes=file_types
+            )
+            
+            # Clean up tkinter
+            root.destroy()
+            
+            return file_path if file_path else None
+            
+        except ImportError:
+            logger.warning("tkinter not available, using custom file selection UI")
+            return self._show_custom_file_selector()
+    
+    def _show_custom_file_selector(self):
+        """Show a custom file selector UI built with pygame.
+        
+        Returns:
+            str or None: Path to selected file, or None if cancelled
+        """
+        # Save the current screen state to restore later
+        screen_backup = self.screen.copy()
+        
+        # Create a file browser UI
+        current_dir = os.path.expanduser("~")  # Start in home directory
+        selected_file = None
+        
+        # Font settings
+        font = pygame.font.Font(None, 22)
+        title_font = pygame.font.Font(None, 28)
+        
+        # Colors
+        bg_color = (50, 50, 60)
+        panel_color = (30, 30, 40)
+        selected_color = (70, 100, 150)
+        dir_color = (70, 130, 200)
+        
+        # Create directory navigation history
+        dir_history = [current_dir]
+        history_pos = 0
+        
+        # File filter
+        file_extensions = ['.wav', '.mp3', '.ogg']
+        
+        # Scroll position for directory listing
+        scroll_offset = 0
+        max_visible_items = 15
+        
+        # Add navigation buttons
+        up_button_rect = pygame.Rect(50, 60, 30, 30)
+        home_button_rect = pygame.Rect(90, 60, 30, 30)
+        refresh_button_rect = pygame.Rect(130, 60, 30, 30)
+        
+        # Additional state variables
+        item_height = 30
+        list_start_y = 100
+        
+        while True:
+            # Get mouse position for hover effects
+            mouse_pos = pygame.mouse.get_pos()
+            
+            # Handle events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        # Cancel and return to previous screen
+                        self.screen.blit(screen_backup, (0, 0))
+                        return None
+                    
+                    if event.key == pygame.K_BACKSPACE:
+                        # Go up one directory
+                        parent_dir = os.path.dirname(current_dir)
+                        if parent_dir != current_dir:  # Prevent going above root
+                            current_dir = parent_dir
+                            dir_history = dir_history[:history_pos+1]
+                            dir_history.append(current_dir)
+                            history_pos = len(dir_history) - 1
+                            scroll_offset = 0  # Reset scroll position
+                            selected_file = None
+                    
+                    if event.key == pygame.K_LEFT and history_pos > 0:
+                        # Navigate back in history
+                        history_pos -= 1
+                        current_dir = dir_history[history_pos]
+                        scroll_offset = 0
+                        selected_file = None
+                    
+                    if event.key == pygame.K_RIGHT and history_pos < len(dir_history) - 1:
+                        # Navigate forward in history
+                        history_pos += 1
+                        current_dir = dir_history[history_pos]
+                        scroll_offset = 0
+                        selected_file = None
+                
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    # Check navigation buttons
+                    if up_button_rect.collidepoint(mouse_pos):
+                        # Go up one directory
+                        parent_dir = os.path.dirname(current_dir)
+                        if parent_dir != current_dir:  # Prevent going above root
+                            current_dir = parent_dir
+                            dir_history = dir_history[:history_pos+1]
+                            dir_history.append(current_dir)
+                            history_pos = len(dir_history) - 1
+                            scroll_offset = 0  # Reset scroll position
+                            selected_file = None
+                            continue
+                    
+                    if home_button_rect.collidepoint(mouse_pos):
+                        # Go to home directory
+                        current_dir = os.path.expanduser("~")
+                        dir_history = dir_history[:history_pos+1]
+                        dir_history.append(current_dir)
+                        history_pos = len(dir_history) - 1
+                        scroll_offset = 0
+                        selected_file = None
+                        continue
+                    
+                    if refresh_button_rect.collidepoint(mouse_pos):
+                        # Refresh current directory
+                        scroll_offset = 0
+                        continue
+                    
+                    # Check if cancel button was clicked
+                    cancel_rect = pygame.Rect(WINDOW_WIDTH - 150, WINDOW_HEIGHT - 50, 130, 40)
+                    if cancel_rect.collidepoint(mouse_pos):
+                        self.screen.blit(screen_backup, (0, 0))
+                        return None
+                    
+                    # Check if select button was clicked
+                    select_rect = pygame.Rect(WINDOW_WIDTH - 300, WINDOW_HEIGHT - 50, 130, 40)
+                    if select_rect.collidepoint(mouse_pos) and selected_file:
+                        self.screen.blit(screen_backup, (0, 0))
+                        return selected_file
+                    
+                    # Scroll handling
+                    if event.button == 4:  # Scroll up
+                        scroll_offset = max(0, scroll_offset - 1)
+                    elif event.button == 5:  # Scroll down
+                        # Will be limited by the actual item count in the draw loop
+                        scroll_offset += 1
+                    
+                    # Check if a file or directory in the list was clicked
+                    try:
+                        entries = sorted(os.listdir(current_dir))
+                        dirs = [d for d in entries if os.path.isdir(os.path.join(current_dir, d))]
+                        files = [f for f in entries if os.path.isfile(os.path.join(current_dir, f)) 
+                                and os.path.splitext(f)[1].lower() in file_extensions]
+                        
+                        all_items = [('..', True)] + [(d, True) for d in dirs] + [(f, False) for f in files]
+                        
+                        # Limit scroll offset
+                        max_scroll = max(0, len(all_items) - max_visible_items)
+                        scroll_offset = min(scroll_offset, max_scroll)
+                        
+                        # Only check visible items
+                        visible_items = all_items[scroll_offset:scroll_offset + max_visible_items]
+                        
+                        for i, (name, is_dir) in enumerate(visible_items):
+                            # Position in the visible list
+                            item_rect = pygame.Rect(50, list_start_y + i * item_height, WINDOW_WIDTH - 100, item_height)
+                            if item_rect.collidepoint(mouse_pos):
+                                if is_dir:
+                                    # Navigate into directory
+                                    if name == '..':
+                                        # Go up one directory
+                                        parent_dir = os.path.dirname(current_dir)
+                                        if parent_dir != current_dir:  # Prevent going above root
+                                            current_dir = parent_dir
+                                    else:
+                                        # Enter the selected directory
+                                        new_dir = os.path.join(current_dir, name)
+                                        current_dir = new_dir
+                                    
+                                    # Update history
+                                    dir_history = dir_history[:history_pos+1]
+                                    dir_history.append(current_dir)
+                                    history_pos = len(dir_history) - 1
+                                    
+                                    # Reset scroll position
+                                    scroll_offset = 0
+                                    
+                                    # Clear selected file when changing directories
+                                    selected_file = None
+                                else:
+                                    # Select file
+                                    selected_file = os.path.join(current_dir, name)
+                    except (PermissionError, OSError) as e:
+                        logger.error(f"Error accessing directory: {e}")
+                        # Don't change directory if we can't access it
+                        # Instead, show an error message
+            
+            # Draw the file browser
+            self.screen.fill(bg_color)
+            
+            # Draw title
+            title = "Select Audio File"
+            title_surf = title_font.render(title, True, TEXT_COLOR)
+            self.screen.blit(title_surf, (WINDOW_WIDTH//2 - title_surf.get_width()//2, 20))
+            
+            # Draw current directory path
+            max_path_width = WINDOW_WIDTH - 200
+            path_text = current_dir
+            if font.size(path_text)[0] > max_path_width:
+                # Truncate path if too long
+                path_parts = path_text.split(os.sep)
+                truncated_path = os.sep.join(['...'] + path_parts[-3:])
+                path_text = truncated_path
+                
+            dir_surf = font.render(f"Directory: {path_text}", True, TEXT_COLOR)
+            self.screen.blit(dir_surf, (170, 65))
+            
+            # Draw navigation buttons
+            # Up button
+            pygame.draw.rect(self.screen, dir_color if up_button_rect.collidepoint(mouse_pos) else PANEL_COLOR, 
+                            up_button_rect, border_radius=5)
+            pygame.draw.rect(self.screen, TEXT_COLOR, up_button_rect, width=1, border_radius=5)
+            up_text = font.render("↑", True, TEXT_COLOR)
+            self.screen.blit(up_text, (up_button_rect.centerx - up_text.get_width()//2, 
+                                    up_button_rect.centery - up_text.get_height()//2))
+            
+            # Home button
+            pygame.draw.rect(self.screen, dir_color if home_button_rect.collidepoint(mouse_pos) else PANEL_COLOR, 
+                            home_button_rect, border_radius=5)
+            pygame.draw.rect(self.screen, TEXT_COLOR, home_button_rect, width=1, border_radius=5)
+            home_text = font.render("🏠", True, TEXT_COLOR)
+            self.screen.blit(home_text, (home_button_rect.centerx - home_text.get_width()//2, 
+                                        home_button_rect.centery - home_text.get_height()//2))
+            
+            # Refresh button
+            pygame.draw.rect(self.screen, dir_color if refresh_button_rect.collidepoint(mouse_pos) else PANEL_COLOR, 
+                            refresh_button_rect, border_radius=5)
+            pygame.draw.rect(self.screen, TEXT_COLOR, refresh_button_rect, width=1, border_radius=5)
+            refresh_text = font.render("⟳", True, TEXT_COLOR)
+            self.screen.blit(refresh_text, (refresh_button_rect.centerx - refresh_text.get_width()//2, 
+                                        refresh_button_rect.centery - refresh_text.get_height()//2))
+            
+            # Draw file panel background
+            panel_rect = pygame.Rect(40, 90, WINDOW_WIDTH - 80, WINDOW_HEIGHT - 150)
+            pygame.draw.rect(self.screen, panel_color, panel_rect, border_radius=5)
+            
+            # List files and directories
+            try:
+                entries = sorted(os.listdir(current_dir))
+                dirs = [d for d in entries if os.path.isdir(os.path.join(current_dir, d))]
+                files = [f for f in entries if os.path.isfile(os.path.join(current_dir, f)) 
+                        and os.path.splitext(f)[1].lower() in file_extensions]
+                
+                all_items = [('..', True)] + [(d, True) for d in dirs] + [(f, False) for f in files]
+                
+                # Limit scroll offset based on actual number of items
+                max_scroll = max(0, len(all_items) - max_visible_items)
+                scroll_offset = min(scroll_offset, max_scroll)
+                
+                # Draw scrolling file list
+                visible_items = all_items[scroll_offset:scroll_offset + max_visible_items]
+                
+                # Draw scroll indicators if needed
+                if scroll_offset > 0:
+                    pygame.draw.polygon(self.screen, TEXT_COLOR, [
+                        (WINDOW_WIDTH//2 - 10, list_start_y - 15),
+                        (WINDOW_WIDTH//2 + 10, list_start_y - 15),
+                        (WINDOW_WIDTH//2, list_start_y - 5)
+                    ])
+                
+                if scroll_offset < max_scroll:
+                    bottom_y = list_start_y + max_visible_items * item_height + 5
+                    pygame.draw.polygon(self.screen, TEXT_COLOR, [
+                        (WINDOW_WIDTH//2 - 10, bottom_y),
+                        (WINDOW_WIDTH//2 + 10, bottom_y),
+                        (WINDOW_WIDTH//2, bottom_y + 10)
+                    ])
+                
+                for i, (name, is_dir) in enumerate(visible_items):
+                    # Background for selected item or hover
+                    item_rect = pygame.Rect(50, list_start_y + i * item_height, WINDOW_WIDTH - 100, item_height)
+                    
+                    # Highlight the selected file or hovered item
+                    if not is_dir and selected_file == os.path.join(current_dir, name):
+                        pygame.draw.rect(self.screen, selected_color, item_rect, border_radius=3)
+                    elif item_rect.collidepoint(mouse_pos):
+                        pygame.draw.rect(self.screen, (60, 60, 70), item_rect, border_radius=3)
+                    
+                    # Icon based on type
+                    icon = "📁 " if is_dir else "🎵 "
+                    if name == "..":
+                        icon = "⬆️ "
+                        name = "Parent Directory"
+                    
+                    item_text = icon + name
+                    
+                    # Text color based on type
+                    text_color = (180, 200, 255) if is_dir else TEXT_COLOR
+                    
+                    item_surf = font.render(item_text, True, text_color)
+                    self.screen.blit(item_surf, (item_rect.x + 5, item_rect.y + 5))
+            
+            except (PermissionError, OSError) as e:
+                error_msg = f"Error accessing directory: {str(e)}"
+                error_surf = font.render(error_msg, True, (255, 100, 100))
+                self.screen.blit(error_surf, (50, 100))
+                
+                # Add a suggestion to try a different directory
+                suggestion = "Try going back to your home directory"
+                suggestion_surf = font.render(suggestion, True, (220, 220, 100))
+                self.screen.blit(suggestion_surf, (50, 130))
+            
+            # Draw buttons
+            cancel_rect = pygame.Rect(WINDOW_WIDTH - 150, WINDOW_HEIGHT - 50, 130, 40)
+            pygame.draw.rect(self.screen, PANEL_COLOR, cancel_rect, border_radius=5)
+            pygame.draw.rect(self.screen, TEXT_COLOR, cancel_rect, width=1, border_radius=5)
+            
+            cancel_text = font.render("Cancel", True, TEXT_COLOR)
+            self.screen.blit(cancel_text, (cancel_rect.centerx - cancel_text.get_width()//2, 
+                                        cancel_rect.centery - cancel_text.get_height()//2))
+            
+            select_rect = pygame.Rect(WINDOW_WIDTH - 300, WINDOW_HEIGHT - 50, 130, 40)
+            select_color = HIGHLIGHT_COLOR if selected_file else PANEL_COLOR
+            pygame.draw.rect(self.screen, select_color, select_rect, border_radius=5)
+            pygame.draw.rect(self.screen, TEXT_COLOR, select_rect, width=1, border_radius=5)
+            
+            select_text = font.render("Select", True, TEXT_COLOR)
+            self.screen.blit(select_text, (select_rect.centerx - select_text.get_width()//2, 
+                                        select_rect.centery - select_text.get_height()//2))
+            
+            # Draw key shortcuts help
+            help_text = "ESC: Cancel | ←→: History | Scroll to navigate"
+            help_surf = font.render(help_text, True, (150, 150, 150))
+            self.screen.blit(help_surf, (50, WINDOW_HEIGHT - 30))
+            
+            pygame.display.flip()
+            self.clock.tick(30)
+    
+    def _show_error_message(self, message):
+        """Show an error message in the GUI.
+        
+        Args:
+            message (str): Error message to display
+        """
+        # Save the current screen state to restore later
+        screen_backup = self.screen.copy()
+        
+        # Font for the message
+        font = pygame.font.Font(None, 24)
+        
+        # Create message box
+        box_width = 400
+        box_height = 150
+        box_x = (WINDOW_WIDTH - box_width) // 2
+        box_y = (WINDOW_HEIGHT - box_height) // 2
+        
+        # Colors
+        bg_color = (80, 30, 30)
+        border_color = (200, 80, 80)
+        
+        # Wait for user acknowledgment
+        waiting = True
+        while waiting:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                
+                if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                    waiting = False
+            
+            # Draw message box
+            pygame.draw.rect(self.screen, bg_color, (box_x, box_y, box_width, box_height), border_radius=10)
+            pygame.draw.rect(self.screen, border_color, (box_x, box_y, box_width, box_height), width=2, border_radius=10)
+            
+            # Draw message
+            lines = message.split('\n')
+            for i, line in enumerate(lines):
+                text_surf = font.render(line, True, TEXT_COLOR)
+                self.screen.blit(text_surf, 
+                                (box_x + (box_width - text_surf.get_width()) // 2, 
+                                 box_y + 40 + i * 30))
+            
+            # Draw instruction
+            help_text = "Click or press any key to continue"
+            help_surf = font.render(help_text, True, (200, 200, 200))
+            self.screen.blit(help_surf, 
+                          (box_x + (box_width - help_surf.get_width()) // 2, 
+                           box_y + box_height - 30))
+            
+            pygame.display.flip()
+            self.clock.tick(30)
+        
+        # Restore the screen
+        self.screen.blit(screen_backup, (0, 0))
 
     def _setup_signal_handlers(self):
         """Set up signal handlers for graceful shutdown."""

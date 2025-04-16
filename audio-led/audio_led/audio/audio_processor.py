@@ -638,6 +638,9 @@ class AudioProcessor:
     real-time analysis for visualization.
     """
     
+    # Constants
+    MAX_RETRY_COUNT = 3  # Maximum number of times to retry initialization
+    
     def __init__(self, config):
         """
         Initialize the audio processor.
@@ -684,46 +687,41 @@ class AudioProcessor:
         self.processor_thread = None
     
     def start(self):
-        """
-        Start the audio processor.
-        
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Start the audio processor thread"""
         if self.is_running:
-            logger.warning("Audio processor already running")
-            return True
+            return
         
-        # Initialize the audio input device
-        if self.input_device is not None:
-            self.input_device.stop()
-        
-        try:
-            if self.input_method == AudioInputMethod.MICROPHONE:
-                self.input_device = MicrophoneInput(self.audio_config)
-            elif self.input_method == AudioInputMethod.FILE:
-                self.input_device = FileInput(self.audio_config)
-            elif self.input_method == AudioInputMethod.DUMMY:
-                self.input_device = DummyInput(self.audio_config)
-            else:
-                logger.error(f"Unsupported audio input method: {self.input_method}")
-                return False
-        except Exception as e:
-            logger.error(f"Error initializing audio input: {e}")
-            return False
-        
-        # Start the audio input
-        if not self.input_device.start():
-            logger.error("Failed to start audio input")
-            return False
-        
-        # Start the processing thread
+        # Set running state
         self.is_running = True
-        self.processor_thread = threading.Thread(target=self._processor_thread, daemon=True)
-        self.processor_thread.start()
         
-        logger.info(f"Audio processor started with {self.input_method.value} input")
-        return True
+        # Initialize audio input
+        max_retries = AudioProcessor.MAX_RETRY_COUNT
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                # Initialize and open the audio input
+                if self.input_device is None:
+                    self.input_device = self.create_audio_input()
+                
+                # Start the processing thread
+                self.processor_thread = threading.Thread(target=self._processor_thread, daemon=True)
+                self.processor_thread.start()
+                
+                logger.info("Audio processor started")
+                return True
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"Failed to start audio processor (attempt {retry_count}/{max_retries}): {e}")
+                time.sleep(0.5)  # Wait before retrying
+                
+                # Clean up resources before retry
+                self.close_audio_input()
+                
+        # If we get here, all retries failed
+        logger.error(f"Could not start audio processor after {max_retries} attempts")
+        self.is_running = False
+        return False
     
     def stop(self):
         """
@@ -932,6 +930,29 @@ class AudioProcessor:
             beats.append(beat)
         
         return beats
+    
+    def create_audio_input(self):
+        """Create and initialize the audio input device"""
+        if self.input_method == AudioInputMethod.MICROPHONE:
+            input_device = MicrophoneInput(self.audio_config)
+        elif self.input_method == AudioInputMethod.FILE:
+            input_device = FileInput(self.audio_config)
+        elif self.input_method == AudioInputMethod.DUMMY:
+            input_device = DummyInput(self.audio_config)
+        else:
+            raise ValueError(f"Unsupported audio input method: {self.input_method}")
+        
+        # Start the input device
+        if not input_device.start():
+            raise RuntimeError("Failed to start audio input device")
+        
+        return input_device
+    
+    def close_audio_input(self):
+        """Close the audio input device"""
+        if self.input_device is not None:
+            self.input_device.stop()
+            self.input_device = None
 
 # Test the module if run directly
 if __name__ == "__main__":

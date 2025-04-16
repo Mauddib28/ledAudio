@@ -46,6 +46,7 @@ DEFAULT_CONFIG = {
         'chunk_size': 2048,      # Default chunk size for processing
         'output_device': 'auto', # 'auto', 'default', or specific device
         'play_audio': True,      # Whether to play audio through speakers
+        'resample': True,        # Whether to automatically resample audio when needed
     },
     'processing': {
         'fft_enabled': True,     # Whether to perform FFT

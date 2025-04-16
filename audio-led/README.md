@@ -62,12 +62,40 @@ The system will automatically detect available audio sources and LED devices, se
 python audio_led.py -i <input_source> -o <output_method> -c <config_file> -d -g
 ```
 
-- `-i, --input`: Specify audio input source (file path or device)
-- `-o, --output`: Specify output method (leds, file, display)
+- `-i, --input`: Specify audio input source (microphone, file path)
+- `-o, --output`: Specify output method (led_pwm, led_strip, display, file, none)
 - `-c, --config`: Path to configuration file
 - `-d, --debug`: Enable debug logging
 - `-g, --gui`: Launch with graphical user interface
+- `--no-display`: Force headless mode with no GUI windows (uses file output)
+- `-t, --timeout`: Maximum runtime in seconds (default: 3600s/1hr)
 - `--detect`: Detect and list available audio input/output devices
+
+### Running the application:
+
+The easiest way to run the application is with the provided scripts:
+
+```bash
+# Setup the environment (first time)
+./setup_env.sh
+
+# Run with required input and output arguments
+./run_audio_led.sh -i microphone -o file
+
+# Using a file as input with display output
+./run_audio_led.sh -i path/to/music.wav -o display
+
+# Run with GUI
+./run_audio_led.sh --gui
+
+# Run with custom timeout (in seconds)
+./run_audio_led.sh -i microphone -o file --timeout=600
+
+# Show all available options
+./run_audio_led.sh --help
+```
+
+If you don't provide the required input and output arguments, you will be prompted to select them through an interactive interface.
 
 ### Visualization examples:
 

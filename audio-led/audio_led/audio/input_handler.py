@@ -48,6 +48,17 @@ except ImportError:
     HAS_PYDUB = False
     logging.warning("Pydub not available, MP3 support will be disabled")
 
+# Try to import scipy for resampling
+try:
+    from scipy import signal
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+    logging.warning("SciPy not available, audio resampling will be limited")
+
+# Import AudioProcessor class from processor module
+from audio_led.audio.processor import AudioProcessor
+
 # Configure module logger
 logger = logging.getLogger(__name__)
 
@@ -75,6 +86,9 @@ DEFAULT_CHANNELS = 2  # Stereo
 DEFAULT_RATE = 44100  # CD quality
 DEFAULT_CHUNK = 2048  # Processing chunk size
 DEFAULT_FORMAT = 16   # 16-bit audio
+
+# Supported sample rates - most audio interfaces support these
+SUPPORTED_SAMPLE_RATES = [8000, 11025, 16000, 22050, 32000, 44100, 48000, 96000]
 
 #--------------------------------------
 #       CLASSES
@@ -104,6 +118,7 @@ class AudioInputHandler:
         self.chunk_size = self.config.get('chunk_size', DEFAULT_CHUNK)
         self.format = self.config.get('format', DEFAULT_FORMAT)
         self.play_audio = self.config.get('play_audio', True)
+        self.auto_resample = self.config.get('resample', True)  # Enable automatic resampling
         
         # Get the input source from config or prompt user
         self.input_source = self.config.get('input_source', 'auto')
@@ -119,6 +134,8 @@ class AudioInputHandler:
         self.input_type = None
         self.is_file = False
         self.is_open = False
+        self.resample_needed = False
+        self.resampled_data = None
         
         # Set up the audio input source
         self._setup_input_source()
@@ -293,6 +310,21 @@ class AudioInputHandler:
             self.is_file = False
             self.is_open = True
             
+            # Set up audio processor
+            self.audio_processor = AudioProcessor(
+                env_config={
+                    'config': {
+                        'audio': {
+                            'sample_rate': self.rate,
+                            'channels': self.channels,
+                            'chunk_size': self.chunk_size,
+                            'format': self.format
+                        },
+                        'processing': {}
+                    }
+                }
+            )
+            
             logger.info(f"Microphone input initialized (rate={self.rate}, channels={self.channels})")
             return True
             
@@ -330,41 +362,225 @@ class AudioInputHandler:
         Set up WAV file input.
         
         Args:
-            file_path (str): Path to the WAV file
+            file_path: Path to the WAV file
+        
+        Returns:
+            Success flag
         """
         try:
             # Open the WAV file
             self.wf = wave.open(file_path, 'rb')
-            
-            # Get file properties
             self.channels = self.wf.getnchannels()
-            self.rate = self.wf.getframerate()
-            self.format = self.wf.getsampwidth() * 8  # Convert bytes to bits
+            self.original_rate = self.wf.getframerate()
+            self.sample_width = self.wf.getsampwidth()
             
-            if HAS_PYAUDIO and self.play_audio:
-                # Initialize PyAudio for playback
-                self.audio = pyaudio.PyAudio()
+            # Check if resampling is needed
+            self.resample_needed = self.original_rate != self.rate
+            self.using_resampled_audio = False
+            self.resampled_audio = None
+            self.resampled_position = 0
+            
+            if self.resample_needed:
+                logger.info(f"WAV file sample rate ({self.original_rate}Hz) differs from configured rate ({self.rate}Hz)")
+                if self.auto_resample:
+                    logger.info("Resampling enabled - will convert audio to match target rate")
+                    # Load and resample the entire file
+                    if not self._load_and_resample_wav():
+                        logger.warning("Resampling failed, will use original sample rate")
+                        self.rate = self.original_rate
+                        self.resample_needed = False
+                else:
+                    logger.warning("Resampling disabled - using original sample rate")
+                    self.rate = self.original_rate
+                    self.resample_needed = False
+            else:
+                logger.info(f"WAV file sample rate ({self.original_rate}Hz) matches configured rate - no resampling needed")
+            
+            # Try to open audio stream with target rate
+            try:
+                # Initialize PyAudio
+                self.p = pyaudio.PyAudio()
                 
-                # Get format
-                py_format = self.audio.get_format_from_width(self.wf.getsampwidth())
-                
-                # Open stream for playback
-                self.stream = self.audio.open(
-                    format=py_format,
+                # Open stream
+                self.stream = self.p.open(
+                    format=self.p.get_format_from_width(self.sample_width),
                     channels=self.channels,
                     rate=self.rate,
                     output=True
                 )
+                logger.info(f"Opened audio stream with sample rate {self.rate}Hz")
+            except Exception as e:
+                logger.error(f"Failed to open audio stream with rate {self.rate}Hz: {e}")
+                
+                # Try to find closest supported rate
+                if not hasattr(self, 'p') or self.p is None:
+                    self.p = pyaudio.PyAudio()
+                
+                # Get device info for default output device
+                device_info = self.p.get_default_output_device_info()
+                supported_rates = None
+                
+                # Some devices report supported rates
+                if 'supportedSampleRates' in device_info:
+                    supported_rates = device_info['supportedSampleRates']
+                    logger.info(f"Supported sample rates: {supported_rates}")
+                
+                if supported_rates:
+                    # Find closest supported rate
+                    closest_rate = min(supported_rates, key=lambda x: abs(x - self.rate))
+                    logger.info(f"Using closest supported sample rate: {closest_rate}Hz")
+                    self.rate = closest_rate
+                else:
+                    # Fallback to common rates
+                    common_rates = [8000, 11025, 16000, 22050, 32000, 44100, 48000, 96000]
+                    for rate in sorted(common_rates, key=lambda x: abs(x - self.rate)):
+                        try:
+                            logger.info(f"Trying sample rate: {rate}Hz")
+                            self.stream = self.p.open(
+                                format=self.p.get_format_from_width(self.sample_width),
+                                channels=self.channels,
+                                rate=rate,
+                                output=True
+                            )
+                            self.rate = rate
+                            logger.info(f"Successfully opened stream with rate {rate}Hz")
+                            break
+                        except Exception as e:
+                            logger.debug(f"Failed with rate {rate}Hz: {e}")
+                    else:
+                        # If we get here, all rates failed
+                        logger.error("Could not find a working sample rate")
+                        return False
+                
+                # If we need to change resampling based on the new rate
+                if self.original_rate != self.rate and not self.using_resampled_audio and self.auto_resample:
+                    self.resample_needed = True
+                    if not self._load_and_resample_wav():
+                        logger.error("Failed to resample for the fallback rate")
+                        return False
             
+            # Set up audio processor
+            self.audio_processor = AudioProcessor(
+                env_config={
+                    'config': {
+                        'audio': {
+                            'sample_rate': self.rate,
+                            'channels': self.channels,
+                            'chunk_size': self.chunk_size,
+                            'format': self.sample_width * 8
+                        },
+                        'processing': {}
+                    }
+                }
+            )
+            
+            # Set our input type
             self.input_type = "wav_file"
-            self.is_open = True
-            
-            logger.info(f"WAV file input initialized: {file_path}")
-            logger.debug(f"WAV properties: channels={self.channels}, rate={self.rate}, format={self.format}")
             return True
             
         except Exception as e:
-            logger.error(f"Error setting up WAV file input: {e}")
+            logger.error(f"Error setting up WAV input: {e}")
+            return False
+    
+    def _load_and_resample_wav(self):
+        """Load and resample the entire WAV file into memory"""
+        try:
+            # Store original file position
+            original_position = self.wf.tell()
+            self.wf.rewind()
+            
+            # Read the entire file
+            original_audio = self.wf.readframes(self.wf.getnframes())
+            
+            # Convert to numpy array for resampling
+            if self.wf.getsampwidth() == 1:
+                dtype = np.uint8
+            elif self.wf.getsampwidth() == 2:
+                dtype = np.int16
+            elif self.wf.getsampwidth() == 3:
+                dtype = np.int32
+            elif self.wf.getsampwidth() == 4:
+                dtype = np.float32
+            else:
+                raise ValueError(f"Unsupported sample width: {self.wf.getsampwidth()}")
+                
+            # Reshape audio data based on number of channels
+            audio_data = np.frombuffer(original_audio, dtype=dtype)
+            
+            if self.channels > 1:
+                audio_data = audio_data.reshape(-1, self.channels)
+            
+            logger.info(f"Loaded {len(audio_data)} samples from WAV file")
+            
+            # Try to use scipy for high-quality resampling if available
+            try:
+                if HAS_SCIPY:
+                    from scipy import signal
+                    
+                    # Calculate resampling factor
+                    resample_factor = self.rate / self.original_rate
+                    
+                    # For multichannel audio, resample each channel separately
+                    if self.channels > 1:
+                        resampled_data = np.zeros((int(len(audio_data) * resample_factor), self.channels), dtype=dtype)
+                        for ch in range(self.channels):
+                            resampled_data[:, ch] = signal.resample(audio_data[:, ch], int(len(audio_data) * resample_factor))
+                    else:
+                        resampled_data = signal.resample(audio_data, int(len(audio_data) * resample_factor))
+                    
+                    logger.info(f"Resampled audio using scipy from {self.original_rate}Hz to {self.rate}Hz")
+                else:
+                    raise ImportError("scipy not available")
+            except Exception as e:
+                logger.warning(f"Failed to use scipy for resampling: {e}")
+                logger.info("Falling back to linear interpolation for resampling")
+                
+                # Calculate resampling factor
+                resample_factor = self.rate / self.original_rate
+                
+                # For multichannel audio, resample each channel separately
+                if self.channels > 1:
+                    resampled_length = int(len(audio_data) * resample_factor)
+                    resampled_data = np.zeros((resampled_length, self.channels), dtype=dtype)
+                    
+                    for ch in range(self.channels):
+                        # Create interpolation x coordinates (original sample positions)
+                        orig_x = np.arange(len(audio_data))
+                        # Create interpolation y values (original audio data)
+                        orig_y = audio_data[:, ch]
+                        # Create x coordinates for resampled data
+                        new_x = np.linspace(0, len(audio_data) - 1, resampled_length)
+                        # Linear interpolation
+                        resampled_data[:, ch] = np.interp(new_x, orig_x, orig_y)
+                else:
+                    # Create interpolation x coordinates (original sample positions)
+                    orig_x = np.arange(len(audio_data))
+                    # Create x coordinates for resampled data
+                    new_x = np.linspace(0, len(audio_data) - 1, int(len(audio_data) * resample_factor))
+                    # Linear interpolation
+                    resampled_data = np.interp(new_x, orig_x, audio_data)
+                
+                logger.info(f"Resampled audio using linear interpolation from {self.original_rate}Hz to {self.rate}Hz")
+            
+            # Convert back to bytes for playback
+            if self.channels > 1:
+                self.resampled_audio = resampled_data.astype(dtype).tobytes()
+            else:
+                self.resampled_audio = resampled_data.astype(dtype).tobytes()
+            
+            logger.info(f"Resampled audio has {len(self.resampled_audio) // (self.wf.getsampwidth() * self.channels)} frames")
+            
+            # Reset file pointer to its original position
+            self.wf.setpos(original_position)
+            
+            # We're now using the resampled data for playback
+            self.using_resampled_audio = True
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during resampling: {e}")
+            self.using_resampled_audio = False
             return False
     
     def _setup_mp3_input(self, file_path):
@@ -384,8 +600,26 @@ class AudioInputHandler:
             
             # Get file properties
             self.channels = self.audio_segment.channels
-            self.rate = self.audio_segment.frame_rate
+            self.original_rate = self.audio_segment.frame_rate
             self.format = self.audio_segment.sample_width * 8  # Convert bytes to bits
+            
+            # Check if we need to resample
+            self.resample_needed = False
+            target_rate = self.rate
+            
+            # Use pydub's built-in resampling for MP3
+            if self.original_rate != self.rate and self.auto_resample:
+                # pydub can handle resampling internally
+                logger.info(f"Resampling MP3 from {self.original_rate}Hz to {self.rate}Hz using pydub")
+                try:
+                    self.audio_segment = self.audio_segment.set_frame_rate(self.rate)
+                    logger.info("MP3 resampling completed successfully")
+                except Exception as e:
+                    logger.error(f"Failed to resample MP3: {e}, using original rate")
+                    self.rate = self.original_rate
+            else:
+                # Use the original rate
+                self.rate = self.original_rate
             
             # Convert to raw audio data
             self.audio_data = np.array(self.audio_segment.get_array_of_samples())
@@ -398,15 +632,35 @@ class AudioInputHandler:
                 py_format = PYAUDIO_FORMATS.get(self.format, pyaudio.paInt16)
                 
                 # Open stream for playback
-                self.stream = self.audio.open(
-                    format=py_format,
-                    channels=self.channels,
-                    rate=self.rate,
-                    output=True
-                )
+                try:
+                    self.stream = self.audio.open(
+                        format=py_format,
+                        channels=self.channels,
+                        rate=self.rate,
+                        output=True
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to open audio stream for MP3 playback: {e}")
+                    logger.info("Disabling audio playback")
+                    self.play_audio = False
             
             self.input_type = "mp3_file"
             self.is_open = True
+            
+            # Set up audio processor
+            self.audio_processor = AudioProcessor(
+                env_config={
+                    'config': {
+                        'audio': {
+                            'sample_rate': self.rate,
+                            'channels': self.channels,
+                            'chunk_size': self.chunk_size,
+                            'format': self.format
+                        },
+                        'processing': {}
+                    }
+                }
+            )
             
             logger.info(f"MP3 file input initialized: {file_path}")
             logger.debug(f"MP3 properties: channels={self.channels}, rate={self.rate}, format={self.format}")
@@ -434,18 +688,46 @@ class AudioInputHandler:
                 return data
                 
             elif self.input_type == "wav_file":
-                # Read from WAV file
-                data = self.wf.readframes(self.chunk_size)
-                
-                # If at the end of the file, return None
-                if len(data) == 0:
-                    return None
-                
-                # Play the audio if requested
-                if self.stream and self.play_audio:
-                    self.stream.write(data)
-                
-                return data
+                if self.resample_needed and self.resampled_data is not None:
+                    # Read from resampled data
+                    samples_per_chunk = self.chunk_size
+                    start = self.position
+                    end = min(start + samples_per_chunk, len(self.resampled_data))
+                    
+                    # If at the end of the data, return None
+                    if start >= len(self.resampled_data):
+                        return None
+                    
+                    # Get the chunk of resampled data
+                    chunk = self.resampled_data[start:end]
+                    
+                    # Update position
+                    self.position = end
+                    
+                    # Convert to bytes for playback if needed
+                    if self.play_audio and self.stream:
+                        try:
+                            self.stream.write(chunk.tobytes())
+                        except Exception as e:
+                            logger.error(f"Error during audio playback: {e}")
+                    
+                    return chunk
+                else:
+                    # Read from WAV file directly
+                    data = self.wf.readframes(self.chunk_size)
+                    
+                    # If at the end of the file, return None
+                    if len(data) == 0:
+                        return None
+                    
+                    # Play the audio if requested
+                    if self.stream and self.play_audio:
+                        try:
+                            self.stream.write(data)
+                        except Exception as e:
+                            logger.error(f"Error during audio playback: {e}")
+                    
+                    return data
                 
             elif self.input_type == "mp3_file":
                 # Calculate the number of samples in a chunk
@@ -467,7 +749,10 @@ class AudioInputHandler:
                 
                 # Play the audio if requested
                 if self.stream and self.play_audio:
-                    self.stream.write(data.tobytes())
+                    try:
+                        self.stream.write(data.tobytes())
+                    except Exception as e:
+                        logger.error(f"Error during audio playback: {e}")
                 
                 return data
                 
