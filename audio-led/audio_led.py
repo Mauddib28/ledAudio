@@ -35,7 +35,15 @@ import argparse
 import logging
 import time
 import signal
+import traceback
 from pathlib import Path
+
+# Set up basic logging until proper setup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # Local module imports
 # Import these after environment setup to handle missing dependencies gracefully
@@ -219,257 +227,344 @@ def setup_environment(args):
     if args.no_display:
         if 'capabilities' in env_info:
             env_info['capabilities']['display'] = False
+    else:
+        # If GUI mode is requested, explicitly enable display capabilities
+        if args.gui:
+            if 'capabilities' in env_info:
+                env_info['capabilities']['display'] = True
+            logging.info("GUI mode enabled, ensuring display capability")
+        # Explicitly ensure display capabilities if output is display
+        elif cfg['visual']['output_method'] == 'display':
+            if 'capabilities' in env_info:
+                env_info['capabilities']['display'] = True
+            logging.info("Display output mode enabled, ensuring display capability")
+    
+    # Set colorful visualization mode
+    cfg['visual']['color_mode'] = 'colorful'
+    
+    # Initialize hardware manager but don't start full processing
+    logging.info("Initializing hardware manager")
+    from audio_led.hardware.device_manager import DeviceManager
+    hw_manager = DeviceManager(env_info)
     
     # Return combined configuration
-    return {
+    env_config = {
         'env_info': env_info,
         'config': cfg,
-        'args': args
+        'args': args,
+        'hardware_manager': hw_manager
     }
-
-def signal_handler(sig, frame):
-    """
-    Handle interrupt signals to gracefully exit the application
-    """
-    logging.info("Signal received, shutting down")
-    sys.exit(0)
-
-def run_headless(env_config):
-    """
-    Run the system in headless mode (command-line only).
     
-    Args:
-        env_config (dict): Environment configuration
-    """
-    logging.info("Running in headless mode")
-    
-    # Register signal handler for graceful exit
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    # Get runtime limit from config
-    runtime_limit = env_config['args'].timeout
-    
-    # Check if we need to prompt for input source
-    if env_config['config']['audio']['input_source'] is None:
-        print("\n=== Audio LED Visualization System ===")
-        print("Command-line argument for input source is missing.")
-        env_config['config']['audio']['input_source'] = prompt_for_input()
-        logging.info(f"User selected input source: {env_config['config']['audio']['input_source']}")
-    
-    # Check if we need to prompt for output method
-    if env_config['config']['visual']['output_method'] is None:
-        print("\nCommand-line argument for output method is missing.")
-        env_config['config']['visual']['output_method'] = prompt_for_output()
-        logging.info(f"User selected output method: {env_config['config']['visual']['output_method']}")
-    
-    # Ensure we're using file output in headless mode if display was selected
-    if env_config['config']['visual']['output_method'] == 'display' and env_config['args'].no_display:
-        logging.info("Headless mode with --no-display detected, forcing file output instead of display")
-        env_config['config']['visual']['output_method'] = 'file'
-        
-    # Set colorful visualization mode
-    if 'config' in env_config and 'visual' in env_config['config']:
-        env_config['config']['visual']['color_mode'] = 'colorful'
-    
-    # Initialize hardware
-    hw_manager = device_manager.DeviceManager(env_config)
-    
-    # Initialize audio input
-    print("\n=== Audio input initialization ===")
-    audio_input = input_handler.AudioInputHandler(env_config)
-    
-    # Make sure we have a valid input source before continuing
-    if audio_input.input_type is None:
-        logging.error("No audio input source selected, exiting")
-        print("\nNo audio input source was selected. Exiting.")
-        return
-    
-    # Initialize audio processor
-    audio_proc = processor.AudioProcessor(env_config)
-    audio_proc.audio_input = audio_input
-    
-    # Initialize RGB converter
-    rgb_conv = rgb_converter.RGBConverter(env_config)
-    
-    # Initialize output handler
-    output = output_handler.OutputHandler(env_config, hw_manager)
-    
-    # Print instructions for user interaction
-    print("\nAudio LED Visualization running in headless mode")
-    print(f"Using input type: {audio_input.input_type}")
-    print(f"Output method: {env_config['config']['visual']['output_method']}")
-    print("Press Ctrl+C to stop the visualization")
-    print(f"Visualization will automatically stop after {runtime_limit} seconds\n")
-    
-    # Start processing loop
-    start_time = time.time()
-    loop_count = 0
-    no_data_count = 0
-    
-    try:
-        logging.info("Starting audio processing loop")
-        
-        while True:
-            # Check if we've exceeded the runtime limit
-            if time.time() - start_time > runtime_limit:
-                logging.info(f"Runtime limit of {runtime_limit} seconds reached, shutting down")
-                break
-            
-            # Get audio data
-            audio_data = audio_input.get_audio_chunk()
-            
-            # If no audio data is available, handle accordingly
-            if audio_data is None:
-                no_data_count += 1
-                if no_data_count >= 3:  # After 3 attempts with no data
-                    if audio_input.is_file:
-                        # For file input, end of file means we're done
-                        logging.info("End of audio file reached, shutting down")
-                        print("End of audio file reached. Exiting.")
-                        break
-                    else:
-                        # For microphone, wait and retry
-                        logging.warning("No audio data received from microphone")
-                        time.sleep(0.5)
-                        no_data_count = 0
-                continue
-            
-            # Reset the no data counter if we got data
-            no_data_count = 0
-            
-            # Process audio data
-            processed_data = audio_proc.process(audio_data)
-            
-            # Ensure we have valid processed data
-            if processed_data is None:
-                logging.warning("No processed audio data available")
-                time.sleep(0.1)
-                continue
-                
-            # Check if processed data has valid content
-            has_valid_data = False
-            try:
-                # Check if any key in processed_data has non-zero data
-                for key, value in processed_data.items():
-                    if hasattr(value, 'any'):  # For numpy arrays
-                        if value.any():
-                            has_valid_data = True
-                            break
-                    elif hasattr(value, '__len__'):  # For lists, tuples, etc.
-                        if len(value) > 0 and any(v != 0 for v in value):
-                            has_valid_data = True
-                            break
-                    elif value:  # For scalar values
-                        has_valid_data = True
-                        break
-                
-                if not has_valid_data:
-                    logging.warning("Processed data contains no usable values")
-                    time.sleep(0.1)
-                    continue
-            except Exception as e:
-                logging.warning(f"Error validating processed data: {e}")
-                # Continue anyway to avoid stopping the flow
-            
-            # Convert to RGB
-            rgb_values = rgb_conv.convert(processed_data)
-            
-            # Output the RGB values
-            output.update(rgb_values)
-            
-            # Increment the loop count
-            loop_count += 1
-            
-            # Every 100 loops, display a heartbeat message
-            if loop_count % 100 == 0:
-                print(f"Processed {loop_count} audio chunks (running for {int(time.time() - start_time)} seconds)")
-            
-    except KeyboardInterrupt:
-        logging.info("Keyboard interrupt received, shutting down")
-        print("\nVisualization stopped by user.")
-    finally:
-        # Cleanup
-        audio_input.close()
-        output.close()
-        logging.info("System shutdown complete")
-        print("System shutdown complete.")
+    return env_config
 
 def run_with_gui(env_config):
     """
-    Run the system with a graphical user interface.
+    Run the application with a graphical user interface.
     
     Args:
-        env_config (dict): Environment configuration
+        env_config (dict): Environment configuration.
+        
+    Returns:
+        bool: True if execution completed successfully, False otherwise.
     """
-    logging.info("Running with GUI")
+    logging.info("Starting with GUI")
     
-    # Check if we need to prompt for input source
-    if env_config['config']['audio']['input_source'] is None:
-        print("\n=== Audio LED Visualization System ===")
-        print("Command-line argument for input source is missing.")
-        env_config['config']['audio']['input_source'] = prompt_for_input()
-        logging.info(f"User selected input source: {env_config['config']['audio']['input_source']}")
-    
-    # Check if we need to prompt for output method
-    if env_config['config']['visual']['output_method'] is None:
-        print("\nCommand-line argument for output method is missing.")
-        env_config['config']['visual']['output_method'] = prompt_for_output()
-        logging.info(f"User selected output method: {env_config['config']['visual']['output_method']}")
-    
-    # Import GUI modules here to avoid dependencies when running headless
     try:
-        from audio_led.utils import gui
-        app = gui.Application(env_config)
+        # Import GUI-related modules
+        try:
+            from audio_led.utils.gui import Application
+        except ImportError as e:
+            logging.error(f"Failed to import GUI modules: {e}")
+            logging.warning("Falling back to headless mode")
+            return run_headless(env_config)
+        
+        # Create and start the application with the environment configuration
+        app = Application(env_config)
+        
+        # Run the application (blocking call)
         app.run()
-    except ImportError as e:
-        logging.error(f"Failed to import GUI modules: {e}")
-        logging.info("Falling back to headless mode")
-        run_headless(env_config)
+        
+        logging.info("GUI has closed. Cleaning up resources.")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error in GUI mode: {e}")
+        return False
+
+# Global flag for graceful exit
+should_exit = False
+
+def signal_handler(sig, frame):
+    """
+    Handle signal interrupts gracefully.
+    """
+    global should_exit
+    should_exit = True
+    # Don't log directly from signal handler as it might not be safe
+    print("\nReceived interrupt signal, shutting down gracefully...")
+
+# Set up signal handlers early
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+def run_headless(env_config):
+    """
+    Run the application in headless mode, without a GUI.
+    
+    Args:
+        env_config (dict): Environment configuration.
+        
+    Returns:
+        bool: True if execution completed successfully, False otherwise.
+    """
+    logging.info("Starting in headless mode")
+    
+    # Get configuration
+    config = env_config.get('config', {})
+    
+    # Check for essential configuration
+    if config.get('audio', {}).get('input_source') is None:
+        logging.warning("No input source specified in config")
+        input_source = input("Enter input source (file path, 'mic', or 'demo'): ")
+        if 'audio' not in config:
+            config['audio'] = {}
+        config['audio']['input_source'] = input_source
+        logging.info(f"User entered input source: {input_source}")
+    
+    if config.get('visual', {}).get('output_method') is None:
+        logging.warning("No output method specified in config")
+        output_method = input("Enter output method (led, display, file): ")
+        if 'visual' not in config:
+            config['visual'] = {}
+        config['visual']['output_method'] = output_method
+        logging.info(f"User entered output method: {output_method}")
+    
+    try:
+        # Import necessary modules
+        from audio_led.audio.input_handler import AudioInputHandler
+        from audio_led.audio.processor import AudioProcessor
+        from audio_led.visual.rgb_converter import RGBConverter
+        from audio_led.visual.output_handler import OutputHandler
+        
+        # Initialize audio input
+        input_source = config['audio']['input_source']
+        logging.info(f"Setting up audio input with source: {input_source}")
+        audio_input = AudioInputHandler(env_config, device_id=input_source)
+        
+        if not audio_input.start():
+            logging.error("Failed to start audio input")
+            return False
+        
+        # Wait for audio input to initialize with retries
+        max_retries = 10
+        retry_count = 0
+        while not audio_input.is_initialized() and retry_count < max_retries:
+            logging.info(f"Waiting for audio input to initialize (attempt {retry_count+1}/{max_retries})...")
+            time.sleep(0.5)
+            retry_count += 1
+        
+        if not audio_input.is_initialized():
+            logging.error("Failed to initialize audio input after multiple attempts")
+            return False
+        
+        # Initialize audio processor
+        logging.info("Initializing audio processor")
+        audio_processor = AudioProcessor(env_config)
+        audio_processor.audio_input = audio_input
+        
+        # Initialize RGB converter
+        logging.info("Initializing RGB converter")
+        rgb_converter = RGBConverter(env_config)
+        
+        # Initialize output handler using the hardware manager from env_config
+        output_method = config['visual']['output_method']
+        logging.info(f"Setting up output with method: {output_method}")
+        
+        # Use the hardware manager that was initialized in setup_environment
+        hardware_manager = env_config.get('hardware_manager')
+        output_handler = OutputHandler(env_config, hardware_manager)
+        output_handler.open()
+        
+        # Print instructions
+        print("\nAudio LED Visualization running in headless mode")
+        print(f"Using input source: {input_source}")
+        print(f"Output method: {output_method}")
+        print("Press Ctrl+C to stop the visualization")
+        if 'args' in env_config and hasattr(env_config['args'], 'timeout'):
+            print(f"Visualization will automatically stop after {env_config['args'].timeout} seconds\n")
+        
+        # Main processing loop
+        start_time = time.time()
+        loop_count = 0
+        running = True
+        
+        logging.info("Starting audio processing loop")
+        
+        while running and not should_exit:
+            try:
+                # Check if the timeout has been reached
+                if 'args' in env_config and hasattr(env_config['args'], 'timeout') and env_config['args'].timeout > 0:
+                    if time.time() - start_time > env_config['args'].timeout:
+                        logging.info(f"Timeout reached ({env_config['args'].timeout} seconds)")
+                        break
+                
+                # Process audio data
+                audio_data = audio_input.get_audio_chunk()
+                
+                if audio_data is None or len(audio_data) == 0:
+                    logging.warning("No audio data received")
+                    time.sleep(0.1)
+                    continue
+                
+                # Process the audio data
+                processed_data = audio_processor.process(audio_data)
+                
+                # Check if we have valid processed data
+                if processed_data is None:
+                    time.sleep(0.1)
+                    continue
+                
+                # Convert processed data to RGB values
+                rgb_values = rgb_converter.convert(processed_data)
+                
+                # Update output
+                if rgb_values is not None:
+                    output_handler.update(rgb_values)
+                
+                # Increment loop count
+                loop_count += 1
+                
+                # Display heartbeat message periodically
+                if loop_count % 100 == 0:
+                    elapsed = time.time() - start_time
+                    print(f"Processed {loop_count} audio chunks (running for {int(elapsed)} seconds)")
+                
+                # Small sleep to prevent CPU overuse
+                time.sleep(0.01)
+                
+            except KeyboardInterrupt:
+                logging.info("Keyboard interrupt received. Exiting.")
+                running = False
+            except Exception as e:
+                logging.error(f"Error in audio processing loop: {str(e)}")
+                logging.debug(f"Error details: {traceback.format_exc()}")
+                time.sleep(0.1)  # Prevent rapid error loops
+        
+        # Clean up
+        logging.info("Shutting down headless mode")
+        audio_input.close()
+        output_handler.close()
+        logging.info("Resources cleaned up")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error in headless mode: {str(e)}")
+        logging.debug(f"Error details: {traceback.format_exc()}")
+        return False
 
 def main():
     """
-    Main entry point for the application.
+    Main entry point for the Audio LED Visualization System.
     """
-    # Parse command-line arguments
-    args = parse_arguments()
-    
-    # Set up environment
-    env_config = setup_environment(args)
-    
-    # If the user wants to detect devices, do that and exit
-    if args.detect:
-        devices = device_manager.detect_devices()
-        print("\nDetected Audio Input Devices:")
-        for i, device in enumerate(devices['input']):
-            print(f"  [{i}] {device['name']}")
+    try:
+        # Parse command line arguments
+        args = parse_arguments()
         
-        print("\nDetected Audio Output Devices:")
-        for i, device in enumerate(devices['output']):
-            print(f"  [{i}] {device['name']}")
+        # Setup the environment based on arguments
+        env_config = setup_environment(args)
         
-        print("\nDetected LED Devices:")
-        for i, device in enumerate(devices['led']):
-            print(f"  [{i}] {device['name']} ({device['type']})")
-        return
-    
-    # Check if both input and output are specified
-    has_input = env_config['config']['audio']['input_source'] is not None
-    has_output = env_config['config']['visual']['output_method'] is not None
-    
-    if not has_input or not has_output:
-        print("\n=== Audio LED Visualization System ===")
-        print("Warning: Required command-line arguments are missing.")
-        print("You will be prompted to provide the missing information.")
-        print("For future runs, use the following arguments:")
-        print("  -i SOURCE  Specify audio input source (microphone, file path)")
-        print("  -o METHOD  Specify output method (led_pwm, led_strip, display, file, none)")
-        print("  --help     Show all available options\n")
-    
-    # Run in either GUI or headless mode
-    if args.gui and env_config['env_info']['system_type'] != 'embedded' and not args.no_display:
-        run_with_gui(env_config)
-    else:
-        run_headless(env_config)
+        # Load configuration
+        config = env_config['config']
+        
+        # Detect devices if requested
+        if args.detect:
+            from audio_led.audio.audio_processor import AudioProcessor
+            from audio_led.visual.output_handler import OutputHandler
+            
+            print("\n=== Device Detection ===")
+            
+            # Detect audio devices
+            audio_devices = AudioProcessor.list_audio_devices()
+            print("\nAvailable Audio Devices:")
+            for i, device in enumerate(audio_devices):
+                print(f"{i}: {device}")
+            
+            # Detect output devices
+            output_devices = OutputHandler.list_output_methods()
+            print("\nAvailable Output Methods:")
+            for method in output_devices:
+                print(f"- {method}")
+            
+            return
+        
+        # Check for early termination
+        if should_exit:
+            logging.info("Exiting due to interrupt signal")
+            return
+        
+        # Check if GUI mode is requested
+        if args.gui:
+            logging.info("GUI mode selected")
+            # Ensure display capabilities are enabled for GUI
+            if 'env_info' not in env_config:
+                env_config['env_info'] = {}
+            if 'capabilities' not in env_config['env_info']:
+                env_config['env_info']['capabilities'] = {}
+            env_config['env_info']['capabilities']['display'] = True
+            
+            # If we're in GUI mode, we don't need to enforce the no_display flag
+            if config.get('visual', {}).get('no_display', False):
+                logging.info("Overriding no_display setting for GUI mode")
+                config['visual']['no_display'] = False
+            
+            # Run with GUI
+            run_with_gui(env_config)
+        else:
+            # Handle input prompts for headless mode if needed
+            if config['audio']['input_source'] is None:
+                print("\n=== Audio LED Visualization System ===")
+                print("Command-line argument for input source is missing.")
+                config['audio']['input_source'] = prompt_for_input()
+                logging.info(f"User selected input source: {config['audio']['input_source']}")
+            
+            if config['visual']['output_method'] is None:
+                print("\nCommand-line argument for output method is missing.")
+                config['visual']['output_method'] = prompt_for_output()
+                logging.info(f"User selected output method: {config['visual']['output_method']}")
+                
+            # Run in headless mode
+            logging.info("Running in headless mode")
+            run_headless(env_config)
+            
+        # Clean exit message
+        if should_exit:
+            print("Program terminated by user. Cleanup complete.")
+        else:
+            print("Program finished successfully. Cleanup complete.")
+            
+    except KeyboardInterrupt:
+        print("\nProgram terminated by user interrupt.")
+    except Exception as e:
+        logging.error(f"Unhandled exception in main: {str(e)}")
+        logging.debug(f"Error details: {traceback.format_exc()}")
+        print(f"\nAn error occurred: {str(e)}")
+    finally:
+        # Final cleanup if needed
+        logging.info("Exiting main function")
 
+# Main execution check
 if __name__ == "__main__":
-    main() 
+    exit_code = 0
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProgram terminated by user.")
+        exit_code = 0
+    except Exception as e:
+        print(f"\nFatal error: {str(e)}")
+        traceback.print_exc()
+        exit_code = 1
+    finally:
+        # Ensure a clean exit
+        sys.exit(exit_code) 

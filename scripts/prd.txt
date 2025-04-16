@@ -8,30 +8,89 @@ The LED Audio Project aims to create a system that visualizes audio input throug
 - Process audio input in real-time with minimal latency
 - Develop various visualization patterns based on audio characteristics
 - Create a user-friendly interface for controlling the system
+- Support a wide range of audio formats and hardware configurations
 
 ## Requirements
-1. Audio Input Processing
-   - Capture audio from microphone or line-in
-   - Perform real-time audio analysis (FFT, amplitude detection)
-   - Extract meaningful features from audio
 
-2. LED Control System
+### 1. Audio Input Processing
+   - Capture audio from microphone or line-in
+   - Process audio files of various formats (WAV, MP3, FLAC, OGG, AAC)
+   - Perform real-time audio analysis (FFT, amplitude detection)
+   - Extract meaningful features from audio (frequency bands, beats, tempo)
+   - Support adaptive buffer sizing to prevent underruns
+   - Implement proper sample rate handling and high-quality resampling
+   - Optimize for low-latency processing across different devices
+
+### 2. LED Control System
    - Control LED strips with different patterns
    - Map audio features to visual parameters
    - Support various visualization modes
+   - Provide real-time responsiveness to audio changes
+   - Implement graceful recovery from hardware disconnections
+   - Support different LED hardware configurations
 
-3. User Interface
+### 3. User Interface
    - Simple controls for selecting visualization modes
    - Adjustments for brightness, sensitivity, and color
+   - Audio input source selection with file browser
+   - Real-time parameter adjustments during playback
+   - Consistent functionality across GUI and CLI modes
+   - Proper error feedback and status information
    - Option to save and load custom settings
 
-4. Hardware Integration
+### 4. Hardware Integration
    - Support for Raspberry Pi and Pico W
    - Audio input device integration
    - Power management for LED strips
+   - Automatic hardware detection and configuration
+   - Fallback modes for limited hardware capabilities
+
+### 5. Performance Optimization
+   - Efficient memory usage for large audio files
+   - Streaming support for extended playback
+   - Multi-threaded processing with proper thread safety
+   - GPU acceleration where available
+   - Caching mechanism for frequently used files and computed data
+
+### 6. Audio-LED Project Component
+   - Robust multi-format audio file handling with case-insensitive extension support
+   - Advanced audio analysis with genre-adaptive processing
+   - High-quality resampling with minimal artifacts
+   - Resource-efficient processing for embedded systems
+   - Graceful error handling and recovery paths
+   - Comprehensive audio metadata extraction and utilization
+   - Beat detection algorithms that work across diverse music genres
+   - Support for visualization pattern customization
+
+## Implementation Details
+
+### Audio Format Support
+- Implement handlers for all common audio formats
+- Use appropriate libraries (wave, pydub, librosa, ffmpeg) for different formats
+- Handle format-specific metadata appropriately
+- Provide consistent data structures regardless of source format
+
+### Sample Rate Management
+- Detect and adapt to device-supported sample rates
+- Implement multiple resampling quality options based on hardware capabilities
+- Cache resampled data for repeat playback
+- Provide transparent rate conversion with minimal artifacts
+
+### Performance Considerations
+- Separate high-priority threads for audio processing
+- Implement buffer management to prevent underruns
+- Optimize FFT and other computationally intensive operations
+- Provide adaptation based on system capabilities
+
+### Error Handling
+- Implement graceful degradation for all failure modes
+- Provide clear user feedback for all errors
+- Automatic recovery paths where possible
+- Proper resource cleanup under all termination scenarios
 
 ## Timeline
 - Phase 1: Core audio processing and basic LED control
 - Phase 2: Enhanced visualization patterns and optimizations
-- Phase 3: User interface development
-- Phase 4: Testing and refinement 
+- Phase 3: User interface development and improved audio format support
+- Phase 4: Performance optimization and advanced audio analysis
+- Phase 5: Testing, refinement and documentation 

@@ -550,19 +550,49 @@ class DisplayOutput(OutputDevice):
         """
         Thread function for updating the display.
         """
+        # Set pygame to use software rendering (for environments with limited GPU support)
+        os.environ['SDL_VIDEODRIVER'] = 'x11'
+        os.environ['SDL_AUDIODRIVER'] = 'dummy'  # Disable audio
+        
         # Initialize pygame
         pygame.init()
-        pygame.display.set_caption("Audio LED Visualization")
         
-        # Create the screen
-        self.screen = pygame.display.set_mode((self.width, self.height))
+        # Set display mode with software rendering flags
+        try:
+            pygame.display.set_caption("Audio LED Visualization")
+            self.screen = pygame.display.set_mode(
+                (self.width, self.height),
+                pygame.SWSURFACE | pygame.DOUBLEBUF
+            )
+        except pygame.error as e:
+            logger.error(f"Error creating display: {e}")
+            # Try fallback method with software rendering
+            try:
+                os.environ['SDL_VIDEODRIVER'] = 'dummy'
+                pygame.display.quit()
+                pygame.display.init()
+                self.screen = pygame.display.set_mode(
+                    (self.width, self.height),
+                    pygame.SWSURFACE
+                )
+                logger.info("Using fallback dummy video driver")
+            except pygame.error as e2:
+                logger.error(f"Failed to create display with fallback: {e2}")
+                self.running = False
+                return
+        
+        # Setup clock for frame rate limiting
         self.clock = pygame.time.Clock()
         
         # Font for text
         try:
             self.font = pygame.font.Font(None, 36)
         except:
-            self.font = pygame.font.SysFont('Arial', 36)
+            try:
+                self.font = pygame.font.SysFont('Arial', 36)
+            except Exception as e:
+                logger.warning(f"Failed to load font: {e}")
+                self.font = None
         
         # Main loop
         self.running = True
@@ -583,10 +613,11 @@ class DisplayOutput(OutputDevice):
             pygame.draw.rect(self.screen, rgb, pygame.Rect(0, 0, self.width, self.height))
             
             # Draw RGB values as text
-            text = f"RGB: ({rgb[0]}, {rgb[1]}, {rgb[2]})"
-            text_surface = self.font.render(text, True, (255, 255, 255) if sum(rgb) < 380 else (0, 0, 0))
-            text_rect = text_surface.get_rect(center=(self.width//2, self.height//2))
-            self.screen.blit(text_surface, text_rect)
+            if self.font:
+                text = f"RGB: ({rgb[0]}, {rgb[1]}, {rgb[2]})"
+                text_surface = self.font.render(text, True, (255, 255, 255) if sum(rgb) < 380 else (0, 0, 0))
+                text_rect = text_surface.get_rect(center=(self.width//2, self.height//2))
+                self.screen.blit(text_surface, text_rect)
             
             # Update the display
             pygame.display.flip()

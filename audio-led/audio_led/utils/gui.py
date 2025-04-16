@@ -35,10 +35,18 @@ import numpy as np
 import signal
 from pathlib import Path
 
-# Import pygame
-import pygame
-import pygame.font
-import pygame.gfxdraw
+# Import pygame with error handling
+try:
+    import pygame
+    import pygame.font
+    import pygame.gfxdraw
+    PYGAME_AVAILABLE = True
+except ImportError as e:
+    PYGAME_AVAILABLE = False
+    print(f"ERROR: Could not import pygame: {e}")
+    print("Please install pygame with: pip install pygame")
+    logging.error(f"Could not import pygame: {e}")
+    logging.error("This application requires pygame to run. Please install it with: pip install pygame")
 
 # Import from audio_led package
 from audio_led.audio import processor
@@ -852,6 +860,13 @@ class Application:
     
     def run(self):
         """Run the GUI application."""
+        # Check if pygame is available
+        if not PYGAME_AVAILABLE:
+            logger.error("Cannot run GUI: pygame is not available")
+            print("Error: Cannot run GUI because pygame is not installed.")
+            print("Please install pygame with: pip install pygame")
+            return
+            
         try:
             # Initialize pygame
             pygame.init()
@@ -893,52 +908,61 @@ class Application:
             # Signal all threads to stop
             self.running = False
             
-            # Function to handle cleanup
-            def cleanup():
-                # Stop the audio processor from the main thread
-                if hasattr(self, 'audio_processor') and self.audio_processor:
-                    try:
-                        logger.info("Stopping audio processor from main thread...")
-                        self.audio_processor.stop()
-                        logger.info("Audio processor stopped from main thread")
-                    except Exception as e:
-                        logger.error(f"Error stopping audio processor from main thread: {e}")
-                
-                # Wait for the audio thread to complete (with shorter timeout)
-                if hasattr(self, 'audio_thread') and self.audio_thread and self.audio_thread.is_alive():
-                    logger.info("Waiting for audio thread to terminate...")
-                    try:
-                        self.audio_thread.join(timeout=1.0)  # Shorter timeout
-                        if self.audio_thread.is_alive():
-                            logger.warning("Audio thread didn't terminate properly, continuing with shutdown")
-                    except Exception as e:
-                        logger.error(f"Error while joining audio thread: {e}")
-                
-                # Stop the LED manager
-                if hasattr(self, 'led_manager') and self.led_manager:
-                    try:
-                        logger.info("Stopping LED manager...")
-                        self.led_manager.stop()
-                    except Exception as e:
-                        logger.error(f"Error stopping LED manager: {e}")
-                
-                # Quit pygame
-                try:
-                    logger.info("Quitting pygame...")
-                    pygame.quit()
-                except Exception as e:
-                    logger.error(f"Error quitting pygame: {e}")
-                    
-                logger.info("Application terminated.")
-            
             # Perform cleanup
-            cleanup()
+            self._cleanup_resources()
             
             # Force exit if we're the main thread
             if threading.current_thread() is threading.main_thread():
                 logger.info("Forcing exit to prevent hanging...")
                 sys.exit(0)
     
+    def _cleanup_resources(self):
+        """Clean up all resources before exiting the application."""
+        logger.info("Starting cleanup process...")
+        
+        # Set a flag to indicate that cleanup is happening from the main thread
+        # This prevents the audio thread from attempting its own cleanup
+        self._cleanup_in_progress = True
+        
+        # Stop the audio processor from the main thread
+        if hasattr(self, 'audio_processor') and self.audio_processor:
+            try:
+                logger.info("Stopping audio processor from main thread...")
+                self.audio_processor.stop()
+                logger.info("Audio processor stopped from main thread")
+            except Exception as e:
+                logger.error(f"Error stopping audio processor from main thread: {e}")
+        
+        # Wait for the audio thread to complete (with timeout)
+        if hasattr(self, 'audio_thread') and self.audio_thread and self.audio_thread.is_alive():
+            logger.info("Waiting for audio thread to terminate...")
+            try:
+                # Give the thread time to exit gracefully
+                self.audio_thread.join(timeout=2.0)
+                if self.audio_thread.is_alive():
+                    logger.warning("Audio thread didn't terminate within timeout, continuing with shutdown")
+            except Exception as e:
+                logger.error(f"Error while joining audio thread: {e}")
+        
+        # Stop the LED manager
+        if hasattr(self, 'led_manager') and self.led_manager:
+            try:
+                logger.info("Stopping LED manager...")
+                self.led_manager.stop()
+                logger.info("LED manager stopped")
+            except Exception as e:
+                logger.error(f"Error stopping LED manager: {e}")
+        
+        # Quit pygame
+        try:
+            logger.info("Quitting pygame...")
+            pygame.quit()
+            logger.info("Pygame quit successfully")
+        except Exception as e:
+            logger.error(f"Error quitting pygame: {e}")
+        
+        logger.info("Application cleanup completed")
+
     def _setup_ui(self):
         """Set up the UI components."""
         # Current Y position for sidebar components
@@ -1261,6 +1285,7 @@ class Application:
     
     def _audio_thread_func(self):
         """Thread function for processing audio data."""
+        logger.info("Audio thread started")
         try:
             while self.running:
                 # Check if main thread is still alive
@@ -1273,28 +1298,42 @@ class Application:
                     time.sleep(0.1)  # Sleep to avoid CPU usage
                     continue
                 
+                # Check if we're still running before processing
+                if not self.running:
+                    break
+                
                 try:
                     # Process audio data with timeout to avoid blocking
                     self.audio_data = self.audio_processor.process()
                     
                     # Sleep a bit to avoid consuming too much CPU
-                    time.sleep(1 / 60)
+                    # Use a shorter sleep and check running flag more frequently
+                    for _ in range(3):  # Split the sleep into smaller chunks
+                        if not self.running:
+                            break
+                        time.sleep(1 / 180)  # 3 smaller sleeps instead of one larger sleep
                 except Exception as e:
                     logger.error(f"Error in audio processing: {e}")
                     logger.exception(e)
+                    # Check running flag before sleeping on error
+                    if not self.running:
+                        break
                     time.sleep(0.1)  # Sleep to avoid rapid error loops
-                
         except Exception as e:
             logger.error(f"Error in audio thread: {e}")
             logger.exception(e)
         finally:
-            # Stop the audio processor
+            # Stop the audio processor if we're responsible for the shutdown
+            # Only try to stop if the main application isn't already stopping
             try:
-                if self.audio_processor and hasattr(self, 'running') and not self.running:
+                if self.audio_processor and not hasattr(self, '_cleanup_in_progress'):
+                    logger.info("Audio thread cleaning up audio processor...")
                     self.audio_processor.stop()
                     logger.info("Audio processor stopped from thread")
             except Exception as e:
                 logger.error(f"Error stopping audio processor from thread: {e}")
+            
+            logger.info("Audio thread terminated")
     
     #--------------------------------------
     #       EVENT HANDLERS
@@ -1326,25 +1365,152 @@ class Application:
     
     def _on_save_config(self):
         """Handle save config button click."""
-        # TODO: Save configuration to file
-        logger.info("Configuration saved")
+        try:
+            # Get the current config path from env_config
+            config_path = self.env_config.get('args', {}).config if hasattr(self.env_config, 'get') else 'config.yaml'
+            
+            # If no config path is specified, use default
+            if not config_path:
+                config_path = 'config.yaml'
+                
+            # Update config with current settings
+            self._update_config_with_current_settings()
+            
+            # Import the config module to save
+            from audio_led.common import config as config_module
+            
+            # Save the configuration
+            success = config_module.save_config(self.config, config_path)
+            
+            if success:
+                logger.info(f"Configuration saved to {config_path}")
+                # Show a message to the user
+                if hasattr(self, '_show_message'):
+                    self._show_message(f"Configuration saved to {config_path}")
+            else:
+                logger.error(f"Failed to save configuration to {config_path}")
+                if hasattr(self, '_show_error_message'):
+                    self._show_error_message(f"Failed to save configuration to {config_path}")
+        except Exception as e:
+            logger.error(f"Error saving configuration: {e}")
+            if hasattr(self, '_show_error_message'):
+                self._show_error_message(f"Error saving configuration: {str(e)}")
+    
+    def _update_config_with_current_settings(self):
+        """Update the configuration dictionary with current UI settings."""
+        # Update audio settings
+        if 'audio' not in self.config:
+            self.config['audio'] = {}
+            
+        # Get values from audio processor if available
+        if hasattr(self, 'audio_processor'):
+            self.config['audio']['volume_scale'] = getattr(self.audio_processor, 'volume_scale', 1.0)
+            self.config['audio']['bass_scale'] = getattr(self.audio_processor, 'bass_scale', 1.0)
+            self.config['audio']['mid_scale'] = getattr(self.audio_processor, 'mid_scale', 1.0)
+            self.config['audio']['treble_scale'] = getattr(self.audio_processor, 'treble_scale', 1.0)
+            self.config['audio']['beat_sensitivity'] = getattr(self.audio_processor, 'beat_sensitivity', 1.0)
+            self.config['audio']['fft_enabled'] = getattr(self.audio_processor, 'fft_enabled', True)
+            
+        # Update visual settings
+        if 'visual' not in self.config:
+            self.config['visual'] = {}
+            
+        # Get values from RGB converter if available
+        if hasattr(self, 'rgb_converter'):
+            self.config['visual']['color_mode'] = getattr(self.rgb_converter, 'color_mode', 'colorful')
+            self.config['visual']['brightness'] = getattr(self.rgb_converter, 'brightness', 1.0)
+            self.config['visual']['saturation'] = getattr(self.rgb_converter, 'saturation', 1.0)
+            
+        # Update LED settings
+        if 'led' not in self.config:
+            self.config['led'] = {}
+            
+        # Get values from LED manager if available
+        if hasattr(self, 'led_manager') and self.led_manager:
+            self.config['led']['enabled'] = True
+            self.config['led']['brightness'] = getattr(self.led_manager, 'brightness', 0.5)
+            self.config['led']['led_count'] = getattr(self.led_manager, 'led_count', 60)
+            
+        logger.debug("Updated configuration with current settings")
     
     def _on_quit(self):
         """Handle quit button click."""
         try:
-            # Safely stop audio processor first before quitting
-            if hasattr(self, 'audio_processor'):
-                self.audio_processor.stop()
-            
             # Signal the application to stop
             self.running = False
             logger.info("Quit button pressed, exiting application...")
+            
+            # Use our improved cleanup method
+            self._cleanup_resources()
             
             # Force exit in case normal shutdown fails
             sys.exit(0)
         except Exception as e:
             logger.error(f"Error during quit: {e}")
             sys.exit(1)
+
+    def _show_message(self, message):
+        """Show a success message in the GUI.
+        
+        Args:
+            message (str): Message to display
+        """
+        # Save the current screen state to restore later
+        if not hasattr(self, 'screen') or self.screen is None:
+            logger.warning("Cannot show message: screen not initialized")
+            return
+            
+        screen_backup = self.screen.copy()
+        
+        # Font for the message
+        font = pygame.font.Font(None, 24)
+        
+        # Create message box
+        box_width = 400
+        box_height = 150
+        box_x = (WINDOW_WIDTH - box_width) // 2
+        box_y = (WINDOW_HEIGHT - box_height) // 2
+        
+        # Colors
+        bg_color = (40, 80, 40)
+        border_color = (80, 200, 80)
+        
+        # Wait for user acknowledgment
+        waiting = True
+        while waiting and self.running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    waiting = False
+                
+                if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                    waiting = False
+            
+            # Draw message box
+            pygame.draw.rect(self.screen, bg_color, (box_x, box_y, box_width, box_height), border_radius=10)
+            pygame.draw.rect(self.screen, border_color, (box_x, box_y, box_width, box_height), width=2, border_radius=10)
+            
+            # Draw message
+            lines = message.split('\n')
+            for i, line in enumerate(lines):
+                text_surf = font.render(line, True, TEXT_COLOR)
+                self.screen.blit(text_surf, 
+                                (box_x + (box_width - text_surf.get_width()) // 2, 
+                                 box_y + 40 + i * 30))
+            
+            # Draw instruction
+            help_text = "Click or press any key to continue"
+            help_surf = font.render(help_text, True, (200, 200, 200))
+            self.screen.blit(help_surf, 
+                          (box_x + (box_width - help_surf.get_width()) // 2, 
+                           box_y + box_height - 30))
+            
+            pygame.display.flip()
+            self.clock.tick(30)
+        
+        # Restore the screen
+        if self.running:
+            self.screen.blit(screen_backup, (0, 0))
 
 
 #--------------------------------------
