@@ -391,38 +391,42 @@ class Application:
                 logger.warning("File selection cancelled or invalid file selected")
                 return
         
-        # Set up the audio input
-        if source == 'microphone':
+        try:
+            # Import the input handler module
             from audio_led.audio import input_handler
-            audio_input = input_handler.AudioInputHandler(self.env_config)
-            success = audio_input._setup_microphone_input()
-        else:
-            from audio_led.audio import input_handler
-            audio_input = input_handler.AudioInputHandler(self.env_config)
-            success = audio_input._setup_file_input(source)
-        
-        if success:
-            # Store the input source
-            self.input_source = source
-            self.input_source_selected = True
             
-            # Set the audio input in the processor
-            self.audio_processor.audio_input = audio_input
+            # Create an audio input handler with the selected source as device_id
+            audio_input = input_handler.AudioInputHandler(self.env_config, device_id=source)
             
-            # Start the audio processor and thread
-            self.audio_processor.running = True
-            self.audio_thread.start()
+            # Start the audio input handler (this initializes based on input type)
+            success = audio_input.start()
             
-            # If LED manager exists, start it
-            if self.led_manager:
-                self.led_manager.start()
-            
-            # Switch to main UI
-            self._setup_ui()
-        else:
-            logger.error(f"Failed to set up input source: {source}")
-            # Add a user-visible error message in the GUI
-            self._show_error_message(f"Failed to use {source} as input source")
+            if success:
+                # Store the input source
+                self.input_source = source
+                self.input_source_selected = True
+                
+                # Set the audio input in the processor
+                self.audio_processor.audio_input = audio_input
+                
+                # Start the audio processor and thread
+                self.audio_processor.running = True
+                self.audio_thread.start()
+                
+                # If LED manager exists, start it
+                if self.led_manager:
+                    self.led_manager.start()
+                
+                # Switch to main UI
+                self._setup_ui()
+            else:
+                logger.error(f"Failed to start audio input with source: {source}")
+                # Add a user-visible error message in the GUI
+                self._show_error_message(f"Failed to use {source} as input source")
+        except Exception as e:
+            logger.error(f"Error setting up audio input: {str(e)}")
+            logger.exception(e)
+            self._show_error_message(f"Error: {str(e)}")
 
     def _open_file_dialog(self):
         """Open a file dialog to select an audio file.
