@@ -167,8 +167,7 @@
         2,
         3
       ],
-      "testStrategy": "Command-line option testing, script-based automation testing, error handling verification",
-      "subtasks": []
+      "testStrategy": "Command-line option testing, script-based automation testing, error handling verification"
     },
     {
       "id": 8,

@@ -1,0 +1,11 @@
+# Task ID: 7
+# Title: Develop User Interface - CLI Mode
+# Status: todo
+# Dependencies: 1, 2, 3
+# Priority: medium
+# Description: Create a command-line interface for headless operation
+# Details:
+Implement a CLI that provides equivalent functionality to the GUI for headless systems. Support configuration via command-line arguments and config files. Create logging and status reporting suitable for terminal output. Ensure consistent behavior between GUI and CLI modes.
+
+# Test Strategy:
+Command-line option testing, script-based automation testing, error handling verification

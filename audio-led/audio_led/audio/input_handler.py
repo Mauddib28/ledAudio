@@ -1,1123 +1,992 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# This file is part of the Audio-LED project
-# Audio-LED provides audio reactive lighting effects for Raspberry Pi/Arduino/ESP projects
-# https://github.com/aluhmann/audio-led/
-# 
-# Original elements from:
-# https://github.com/scottlawsonbc/audio-reactive-led-strip
-# Copyright(c) 2017 Scott Lawson
-# 
-# This file may be licensed under the terms of the
-# GNU General Public License Version 3 (the ``GPL'').
-#
-# Audio-LED is free software: you can redistribute it and/or modify
-# it under the terms of the GPL.
-#
-# Audio-LED is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GPL for more details.
-# 
-# You should have received a copy of the GPL License
-# along with Audio-LED.  If not, see <http://www.gnu.org/licenses/>.
-
-# -*- coding: utf-8 -*-
-
-from __future__ import unicode_literals
-
 import os
 import time
+import wave
 import logging
 import threading
-from collections import deque
-from io import BytesIO
-import traceback
-
 import numpy as np
-import pyaudio
-from pydub import AudioSegment
-import scipy.signal as signal
+from abc import ABC, abstractmethod
+from collections import deque
+from pathlib import Path
 
-# Conditionally import soundfile - make it optional
+# Try to import optional dependencies
+try:
+    import pyaudio
+    HAS_PYAUDIO = True
+except ImportError:
+    HAS_PYAUDIO = False
+    logging.warning("PyAudio not available - install with: pip install pyaudio")
+
+try:
+    from pydub import AudioSegment
+    HAS_PYDUB = True
+except ImportError:
+    HAS_PYDUB = False
+    logging.warning("PyDub not available - install with: pip install pydub")
+
 try:
     import soundfile as sf
-    SOUNDFILE_AVAILABLE = True
+    HAS_SOUNDFILE = True
 except ImportError:
-    SOUNDFILE_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("soundfile module not found, falling back to pydub for audio file loading")
+    HAS_SOUNDFILE = False
+    logging.warning("Soundfile not available - install with: pip install soundfile")
 
-# Conditionally import librosa - make it optional
 try:
     import librosa
-    LIBROSA_AVAILABLE = True
+    HAS_LIBROSA = True
 except ImportError:
-    LIBROSA_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("librosa module not found, using simpler resampling methods")
+    HAS_LIBROSA = False
+    logging.warning("Librosa not available - install with: pip install librosa")
 
-# Conditionally import MP3Player - create a fallback if not available
 try:
-    from audio_led.audio.mp3_player import MP3Player
-    MP3PLAYER_AVAILABLE = True
+    import sounddevice as sd
+    HAS_SOUNDDEVICE = True
 except ImportError:
-    MP3PLAYER_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("mp3_player module not found, using pydub for MP3 playback")
-    
-    # Create a simple fallback MP3Player using pydub directly
-    class MP3Player:
-        """Fallback MP3 player implementation"""
-        def __init__(self, file_path):
-            self.file_path = file_path
-            self.position = 0
-            self.data = None
-            self.sample_rate = 44100
-            self.segment = None
-            self._load()
-            
-        def _load(self):
-            try:
-                self.segment = AudioSegment.from_file(self.file_path, format="mp3")
-                self.sample_rate = self.segment.frame_rate
-                # Convert to mono if stereo
-                if self.segment.channels > 1:
-                    self.segment = self.segment.set_channels(1)
-                # Convert to numpy array
-                self.data = np.array(self.segment.get_array_of_samples())
-                return True
-            except Exception as e:
-                logger.error("Error loading MP3: %s", str(e))
-                return False
-                
-        def read_chunk(self, chunk_size):
-            if self.data is None:
-                return None
-            if self.position + chunk_size <= len(self.data):
-                chunk = self.data[self.position:self.position + chunk_size]
-                self.position += chunk_size
-                return chunk
-            else:
-                return None
-                
-        def rewind(self):
-            self.position = 0
-
-from audio_led.common.utils import resample_frame, get_elapsed, map_range, clamp
-from audio_led.common.thread_manager import ThreadManager
-
-# Initialize the logger
-logger = logging.getLogger(__name__)
+    HAS_SOUNDDEVICE = False
+    logging.warning("Sounddevice not available - install with: pip install sounddevice")
 
 # Constants
-INPUT_NONE = 0
-INPUT_FILE = 1
-INPUT_STREAM = 2
-INPUT_MIC = 3
+DEFAULT_SAMPLE_RATE = 44100
+DEFAULT_CHANNELS = 2
+DEFAULT_CHUNK_SIZE = 1024
+DEFAULT_BUFFER_SIZE = 10  # Number of chunks to buffer
 
-BUFFER_FACTOR = 4
-BUFFER_MIN_READ = 20
-MAX_BUFFER_SIZE = 16384
-MAX_HISTORY_SIZE = 2048
-SILENCE_SAMPLES = 1024
-SILENCE_CHECK_MIN = 650
+logger = logging.getLogger(__name__)
 
-MAX_RESAMPLE_RATIO = 0.45
-MIN_RESAMPLE_RATIO = 0.05
-
-# Dictionary mapping file extensions to audio formats
-# Using lowercase keys for case-insensitive comparison
-AUDIO_FORMAT_MAP = {
-    'wav': 'wav',
-    'mp3': 'mp3',
-    'flac': 'flac',
-    'ogg': 'ogg'
-}
-
-# Audio cache for resampled data
-RESAMPLED_AUDIO_CACHE = {}
-# Maximum number of entries in the cache
-MAX_CACHE_ENTRIES = 10
-# Cached audio data size in bytes
-CACHE_SIZE = 0
-# Maximum cache size in bytes (default: 500MB)
-MAX_CACHE_SIZE = 500 * 1024 * 1024
-
-def get_file_format(filename):
-    """
-    Detect audio file format from extension or file header
+class AudioInputHandler(ABC):
+    """Base class for audio input handlers."""
     
-    Parameters
-    ----------
-    filename : str
-        Path to the audio file
-    
-    Returns
-    -------
-    str
-        Detected format ('mp3', 'wav', 'flac', 'ogg', or None)
-    """
-    # First check by extension
-    if filename.startswith('http'):
-        # For URLs, we can only check by extension
-        ext = os.path.splitext(filename.split('?')[0])[1].lower().lstrip('.')
-        return AUDIO_FORMAT_MAP.get(ext)
-    
-    # For local files, check extension first
-    ext = os.path.splitext(filename)[1].lower().lstrip('.')
-    if ext in AUDIO_FORMAT_MAP:
-        return AUDIO_FORMAT_MAP[ext]
-    
-    # If extension doesn't match or is missing, check file header
-    try:
-        with open(filename, 'rb') as f:
-            header = f.read(12)
-            # Check for WAV header (RIFF)
-            if header.startswith(b'RIFF') and b'WAVE' in header:
-                return 'wav'
-            # Check for MP3 header (ID3 or MPEG frame sync)
-            elif header.startswith(b'ID3') or (header[0] == 0xFF and (header[1] & 0xE0) == 0xE0):
-                return 'mp3'
-            # Check for FLAC header
-            elif header.startswith(b'fLaC'):
-                return 'flac'
-            # Check for OGG header
-            elif header.startswith(b'OggS'):
-                return 'ogg'
-    except Exception as e:
-        logger.error("Error detecting file format by header: %s", str(e))
-    
-    return None
-
-def clear_cache_if_needed(new_data_size=0):
-    """
-    Clear audio cache if it exceeds size limits
-    
-    Parameters
-    ----------
-    new_data_size : int
-        Size of new data to be added to cache
-    """
-    global CACHE_SIZE, RESAMPLED_AUDIO_CACHE
-    
-    # If adding this data would exceed max cache size
-    if CACHE_SIZE + new_data_size > MAX_CACHE_SIZE:
-        logger.info("Cache size limit reached (%d MB), clearing oldest entries", 
-                    MAX_CACHE_SIZE // (1024 * 1024))
+    def __init__(self, sample_rate=DEFAULT_SAMPLE_RATE, channels=DEFAULT_CHANNELS, 
+                 chunk_size=DEFAULT_CHUNK_SIZE, buffer_size=DEFAULT_BUFFER_SIZE):
+        """Initialize the audio input handler.
         
-        # Sort cache entries by last access time
-        sorted_entries = sorted(
-            [(k, v.get('last_access', 0)) for k, v in RESAMPLED_AUDIO_CACHE.items()],
-            key=lambda x: x[1]
-        )
-        
-        # Remove oldest entries until we have enough space
-        freed_space = 0
-        for key, _ in sorted_entries:
-            if freed_space >= new_data_size or len(RESAMPLED_AUDIO_CACHE) <= MAX_CACHE_ENTRIES // 2:
-                break
-                
-            if key in RESAMPLED_AUDIO_CACHE:
-                entry_size = RESAMPLED_AUDIO_CACHE[key].get('size', 0)
-                del RESAMPLED_AUDIO_CACHE[key]
-                freed_space += entry_size
-                CACHE_SIZE -= entry_size
-                logger.debug("Removed cache entry: %s, freed %d MB", 
-                           key, entry_size // (1024 * 1024))
-        
-        # If we still have too many entries, remove more
-        if len(RESAMPLED_AUDIO_CACHE) > MAX_CACHE_ENTRIES:
-            # Remove oldest entries
-            for key, _ in sorted_entries[:len(RESAMPLED_AUDIO_CACHE) - MAX_CACHE_ENTRIES]:
-                if key in RESAMPLED_AUDIO_CACHE:
-                    entry_size = RESAMPLED_AUDIO_CACHE[key].get('size', 0)
-                    del RESAMPLED_AUDIO_CACHE[key]
-                    CACHE_SIZE -= entry_size
-
-class AudioInputHandler(object):
-    """Class for handling audio inputs from various sources"""
-
-    def __init__(self, config, device_id=None, skip_setup=False):
-        """Initialize audio processor
-
-        Parameters
-        ----------
-        config : dict
-            Configuration dictionary with audio settings
-        device_id : int
-            Device ID for PyAudio
-        skip_setup : bool
-            If True, skip initial setup
+        Args:
+            sample_rate (int): Sample rate in Hz
+            channels (int): Number of audio channels
+            chunk_size (int): Size of audio chunks in frames
+            buffer_size (int): Size of the buffer in chunks
         """
-        logger.debug("Initializing audio input handler...")
-        # Initialize variables
-        self.frames = None
-        self.current_chunk = None
-        self.input_type = None
-        self.fft_range_norm = None
-        self.audio_range_norm = None
-        self.stream = None
-        self.chunk_count = 0
-        self.wav_data = None
-        self.wav_idx = 0
-        self.wav_stream = None
-        self.input_thread = None
-        self.chunk_ready = False
-        self.chunk_available = None
-        self.buffer = None
-        self._data_buffer = None
-        self._mp3_player = None
-        self._input_file = None
-        self._input_file_name = None
-        self._lock = threading.Lock()
-        self._stop_event = threading.Event()
-        self._pause_event = threading.Event()
-        self._thread_running = False
-        self._is_mp3 = False
-        self._is_wav = False
-        self._is_ogg = False
-        self._is_flac = False
-        self._py_audio = None
-        self._is_mic = False
-        self._pause_time = 0
-        self._start_time = 0
-        self._end_time = 0
-        self._running = False
-        self._audio_finished = False
-        self.sample_rate = config.get("SAMPLE_RATE", 48000)
-        self.device_id = device_id if device_id is not None else config.get("DEVICE_ID", None)
-        self.device_name = None
-        self.device_sample_rate = 0
-        self.format_bytes = 0
-        self.chunk_size = config.get("CHUNK_SIZE", 1024)
-        self.bytes_per_sample = config.get("BYTES_PER_SAMPLE", 2)
-        self.mic_rate = config.get("MIC_RATE", 48000)
-        self.output_rate = self.mic_rate
-        self.buffer_size = config.get("BUFFER_SIZE", self.chunk_size * BUFFER_FACTOR)
-        self.channels = config.get("CHANNELS", 1)
-        self.frames_per_buffer = config.get("FRAMES_PER_BUFFER", self.chunk_size)
-        self.resample_buff_ratio = 1.0
-        self.chunks_processed = 0
-        self.loop = config.get("LOOP", True)
-        self.min_frequency = config.get("MIN_FREQUENCY", 20)
-        self.max_frequency = config.get("MAX_FREQUENCY", 16000)
-        self.min_volume_threshold = config.get("MIN_VOLUME_THRESHOLD", 1e-7)
-        self.start_volume_threshold = config.get("START_VOLUME_THRESHOLD", 1e-5)
-        self.history_size = config.get("HISTORY_SIZE", 1)
-        self.history = deque(maxlen=self.history_size)
-        self.config = config
-        self.use_fft_ranges = False
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.chunk_size = chunk_size
+        self.running = False
         self.initialized = False
+        
+        # Buffer for audio data
+        self.buffer = deque(maxlen=buffer_size)
+        self.buffer_lock = threading.RLock()
+        
+        # Thread for processing audio
+        self.thread = None
+        self.thread_exception = None
+        
+        # Volume tracking
+        self.current_volume = 0.0
+        
+        # Audio properties
+        self.duration = 0
+        self.position = 0
+        self.start_time = 0
 
-        # History deques
-        self.history_mel = []
-        self.history_mel_raw = []
-        self.history_vol = []
-        self.history_vol_raw = []
-        self.history_mel_smoothed = []
-        self.history_vol_smoothed = []
-        
-        if not skip_setup:
-            self.setup()
-
-    def setup(self):
-        """Set up the audio input handler"""
-        logger.debug("Setting up audio input handler...")
-        self.setup_input_type(self.device_id)
-        
-    def setup_input_type(self, device_id=None):
-        """Set up the audio input type based on device_id
-
-        Parameters
-        ----------
-        device_id : int
-            Device ID for PyAudio
-        """
-        if device_id is None:
-            logger.debug("No device ID specified")
-            self.input_type = INPUT_NONE
-            return
-        
-        self.device_id = device_id
-        logger.info("Setting up input type for device ID: %s", device_id)
-        
-        # Try to convert to integer for numeric IDs
-        if isinstance(device_id, str) and device_id.isdigit():
-            device_id = int(device_id)
-        
-        # If device is a string, try to handle it as a file path
-        if isinstance(device_id, str) and (os.path.isfile(device_id) or device_id.startswith('http')):
-            # Set file input
-            self._input_file = device_id
-            self._input_file_name = os.path.basename(device_id) if not device_id.startswith('http') else device_id
-            self.input_type = INPUT_FILE
-            logger.info("Input set to file: %s", self._input_file_name)
-            
-            # Detect file format using the helper function
-            file_format = get_file_format(self._input_file)
-            
-            # Set format flags based on detection result
-            self._is_mp3 = file_format == 'mp3'
-            self._is_wav = file_format == 'wav'
-            self._is_flac = file_format == 'flac'
-            self._is_ogg = file_format == 'ogg'
-            
-            if file_format:
-                logger.info("Detected audio format: %s", file_format)
-            else:
-                logger.warning("Unknown audio format for file: %s", self._input_file_name)
-                # We'll try to load it anyway with pydub as a fallback
-        
-        # Handle microphone or line input
-        elif isinstance(device_id, (int, str)) and not (isinstance(device_id, str) and device_id.isdigit()):
-            # Set mic or stream input
-            if device_id == 'mic' or isinstance(device_id, int):
-                self._is_mic = True
-                mic_id = 0 if device_id == 'mic' else device_id
-                self.input_type = INPUT_MIC
-                self.device_id = mic_id
-                logger.info("Input set to microphone with ID: %s", self.device_id)
-            else:
-                self.input_type = INPUT_STREAM
-                self.device_id = device_id
-                logger.info("Input set to audio stream: %s", self.device_id)
-        else:
-            # Invalid device ID
-            logger.warning("Invalid device ID: %s", device_id)
-            self.input_type = INPUT_NONE
-            return
-            
-    def setup_pyaudio_stream(self):
-        """Set up the PyAudio stream for mic input"""
-        if self._py_audio is not None:
-            self.close_pyaudio_stream()
-            
-        # Set up pyaudio
-        self._py_audio = pyaudio.PyAudio()
-        
-        # Get device info
-        device_info = None
-        sample_rate = self.mic_rate
-        
-        # Find device info
-        try:
-            if isinstance(self.device_id, int):
-                device_info = self._py_audio.get_device_info_by_index(self.device_id)
-                self.device_name = device_info.get('name')
-                logger.info("Using audio device: %s", self.device_name)
-                # Try to get the supported sample rate
-                try:
-                    # Some devices report sample rates as strings, some as ints
-                    sr = device_info.get('defaultSampleRate')
-                    if sr:
-                        if isinstance(sr, str) and sr.isdigit():
-                            sample_rate = int(sr)
-                        elif isinstance(sr, (int, float)):
-                            sample_rate = int(sr)
-                    self.device_sample_rate = sample_rate
-                    logger.info("Device sample rate detected: %d Hz", self.device_sample_rate)
-                except (ValueError, TypeError) as e:
-                    logger.warning("Error parsing sample rate: %s", str(e))
-                    # Use default
-                    self.device_sample_rate = self.mic_rate
-                    logger.info("Using default sample rate: %d Hz", self.device_sample_rate)
-            else:
-                # Try to find device by string name
-                for i in range(self._py_audio.get_device_count()):
-                    info = self._py_audio.get_device_info_by_index(i)
-                    if self.device_id.lower() in info['name'].lower():
-                        device_info = info
-                        self.device_id = i
-                        self.device_name = info.get('name')
-                        # Get sample rate
-                        try:
-                            sr = device_info.get('defaultSampleRate')
-                            if sr:
-                                if isinstance(sr, str) and sr.isdigit():
-                                    sample_rate = int(sr)
-                                elif isinstance(sr, (int, float)):
-                                    sample_rate = int(sr)
-                            self.device_sample_rate = sample_rate
-                            logger.info("Device sample rate detected: %d Hz", self.device_sample_rate)
-                        except (ValueError, TypeError) as e:
-                            logger.warning("Error parsing sample rate: %s", str(e))
-                            # Use default
-                            self.device_sample_rate = self.mic_rate
-                            logger.info("Using default sample rate: %d Hz", self.device_sample_rate)
-                        break
-        except Exception as e:
-            logger.error("Error finding audio device: %s", str(e))
-            self.device_sample_rate = self.mic_rate
-            logger.info("Using default sample rate: %d Hz", self.device_sample_rate)
-            
-        # If device info not found, use default
-        if not device_info:
-            logger.warning("Device info not found, using default device")
-            self.device_sample_rate = self.mic_rate
-            logger.info("Using default sample rate: %d Hz", self.device_sample_rate)
-            
-        # Setup audio stream
-        try:
-            self.stream = self._py_audio.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=sample_rate,
-                input=True,
-                input_device_index=self.device_id if isinstance(self.device_id, int) else None,
-                frames_per_buffer=self.frames_per_buffer
-            )
-            logger.info("Opened pyaudio stream with sample rate: %d Hz", sample_rate)
-        except Exception as e:
-            logger.error("Error opening audio stream: %s", str(e))
-            # Try to fall back to default device if specific device fails
-            try:
-                logger.info("Trying to open default audio device")
-                self.stream = self._py_audio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.channels,
-                    rate=self.mic_rate,  # Use default rate for fallback
-                    input=True,
-                    frames_per_buffer=self.frames_per_buffer
-                )
-                sample_rate = self.mic_rate
-                logger.info("Opened default audio device with sample rate: %d Hz", sample_rate)
-            except Exception as e2:
-                logger.error("Error opening default audio device: %s", str(e2))
-                self.stream = None
-                return False
-        
-        # Set output rate to device sample rate
-        self.output_rate = sample_rate
-        return True
-        
-    def close_pyaudio_stream(self):
-        """Close the PyAudio stream"""
-        if self.stream:
-            try:
-                self.stream.stop_stream()
-                self.stream.close()
-            except Exception as e:
-                logger.error("Error closing audio stream: %s", str(e))
-            finally:
-                self.stream = None
-                
-        if self._py_audio:
-            try:
-                self._py_audio.terminate()
-            except Exception as e:
-                logger.error("Error terminating PyAudio: %s", str(e))
-            finally:
-                self._py_audio = None
-                
-    def load_audio_file(self):
-        """Load audio data from file"""
-        global CACHE_SIZE
-        
-        logger.info("Loading audio file: %s", self._input_file_name)
-        
-        cache_key = f"{self._input_file}_{self.sample_rate}"
-        
-        # Check if we already have this file loaded and cached
-        if cache_key in RESAMPLED_AUDIO_CACHE:
-            logger.info("Using cached audio data for %s at %d Hz", 
-                       self._input_file_name, self.sample_rate)
-            
-            # Update last access time
-            RESAMPLED_AUDIO_CACHE[cache_key]['last_access'] = time.time()
-            
-            self.wav_data = RESAMPLED_AUDIO_CACHE[cache_key]['data']
-            self.output_rate = RESAMPLED_AUDIO_CACHE[cache_key]['rate']
+    def initialize(self):
+        """Initialize the audio input handler."""
+        if self.initialized:
             return True
             
-        # MP3 handling
-        if self._is_mp3:
-            logger.debug("Loading MP3 file using MP3Player")
-            try:
-                self._mp3_player = MP3Player(self._input_file)
-                # Update the sample rate to the MP3's actual rate
-                file_sample_rate = self._mp3_player.sample_rate
-                logger.info("MP3 sample rate: %d Hz", file_sample_rate)
-                self.output_rate = file_sample_rate
-                return True
-            except Exception as e:
-                logger.error("Error loading MP3 file: %s", str(e))
-                self._mp3_player = None
-                # Try fallback to pydub
-                return self._load_with_pydub()
-        
-        # WAV, FLAC, OGG handling with soundfile (if available)
-        elif (self._is_wav or self._is_flac or self._is_ogg) and SOUNDFILE_AVAILABLE:
-            try:
-                # Using soundfile for better format support
-                format_name = "WAV" if self._is_wav else "FLAC" if self._is_flac else "OGG"
-                logger.info("Loading %s file using soundfile", format_name)
-                
-                # Load audio data
-                audio_data, file_sample_rate = sf.read(self._input_file, dtype='float32')
-                logger.info("%s sample rate: %d Hz", format_name, file_sample_rate)
-                
-                # Convert stereo to mono if needed
-                if audio_data.ndim > 1 and audio_data.shape[1] > 1:
-                    logger.info("Converting stereo to mono")
-                    audio_data = np.mean(audio_data, axis=1)
-                
-                # Normalize the audio data to the range [-1, 1]
-                if np.max(np.abs(audio_data)) > 1.0:
-                    audio_data = audio_data / np.max(np.abs(audio_data))
-                
-                # Resample if needed
-                if file_sample_rate != self.sample_rate:
-                    logger.info("Resampling %s from %d Hz to %d Hz", 
-                               format_name, file_sample_rate, self.sample_rate)
-                    
-                    # Using librosa for high-quality resampling if available
-                    if LIBROSA_AVAILABLE:
-                        audio_data = librosa.resample(
-                            audio_data, 
-                            orig_sr=file_sample_rate, 
-                            target_sr=self.sample_rate
-                        )
-                    else:
-                        # Simple resampling using scipy if librosa not available
-                        audio_data = self._resample_with_scipy(audio_data, file_sample_rate, self.sample_rate)
-                
-                # Convert to 16-bit integers
-                audio_data = (audio_data * 32767).astype(np.int16)
-                
-                # Calculate size for cache management
-                data_size = audio_data.nbytes
-                
-                # Clear cache if needed
-                if 'clear_cache_if_needed' in globals():
-                    clear_cache_if_needed(data_size)
-                
-                # Store the resampled data
-                self.wav_data = audio_data
-                self.output_rate = self.sample_rate
-                
-                # Cache the resampled audio
-                RESAMPLED_AUDIO_CACHE[cache_key] = {
-                    'data': audio_data,
-                    'rate': self.sample_rate,
-                    'size': data_size,
-                    'last_access': time.time()
-                }
-                
-                # Update total cache size
-                CACHE_SIZE += data_size
-                
-                return True
-            except Exception as e:
-                logger.error("Error loading %s file with soundfile: %s", format_name, str(e))
-                # Try fallback to pydub
-                return self._load_with_pydub()
-        
-        # Try using pydub for all other cases
-        else:
-            return self._load_with_pydub()
-    
-    def _load_with_pydub(self):
-        """Load audio file using pydub as a fallback method"""
         try:
-            logger.info("Loading %s with pydub", self._input_file_name)
-            
-            # Try to load the file with pydub
-            try:
-                audio = AudioSegment.from_file(self._input_file)
-            except Exception as e:
-                logger.error("Error loading with pydub: %s", str(e))
-                
-                # If loading fails, check for missing ffmpeg/avconv
-                if "Couldn't find ffmpeg" in str(e) or "Couldn't find avconv" in str(e):
-                    logger.error("Missing ffmpeg/avconv. Please install: 'sudo apt install ffmpeg' or 'sudo pacman -S ffmpeg'")
-                
-                return False
-                
-            file_sample_rate = audio.frame_rate
-            logger.info("Audio file sample rate: %d Hz", file_sample_rate)
-            
-            # Convert to numpy array
-            samples = np.array(audio.get_array_of_samples())
-            
-            # Convert stereo to mono if needed
-            if audio.channels > 1:
-                logger.info("Converting stereo to mono")
-                samples = samples.reshape((-1, audio.channels))
-                samples = np.mean(samples, axis=1)
-            
-            # Resample if needed
-            if file_sample_rate != self.sample_rate:
-                logger.info("Resampling audio from %d Hz to %d Hz", 
-                           file_sample_rate, self.sample_rate)
-                
-                # Normalize to float
-                float_samples = samples.astype(np.float32)
-                if samples.dtype in [np.int16, np.int32]:
-                    float_samples = float_samples / 32767.0
-                
-                # Resample using best available method
-                if LIBROSA_AVAILABLE:
-                    resampled = librosa.resample(
-                        float_samples, 
-                        orig_sr=file_sample_rate, 
-                        target_sr=self.sample_rate
-                    )
-                else:
-                    # Use scipy if librosa is not available
-                    resampled = self._resample_with_scipy(float_samples, file_sample_rate, self.sample_rate)
-                
-                # Convert back to int16
-                samples = (resampled * 32767).astype(np.int16)
-            
-            # Calculate size for cache management
-            data_size = samples.nbytes
-            
-            # Clear cache if needed
-            if 'clear_cache_if_needed' in globals():
-                clear_cache_if_needed(data_size)
-            
-            # Store the resampled data
-            self.wav_data = samples
-            self.output_rate = self.sample_rate
-            
-            # Cache the resampled audio
-            cache_key = f"{self._input_file}_{self.sample_rate}"
-            RESAMPLED_AUDIO_CACHE[cache_key] = {
-                'data': samples,
-                'rate': self.sample_rate,
-                'size': data_size,
-                'last_access': time.time()
-            }
-            
-            # Update total cache size
-            global CACHE_SIZE
-            CACHE_SIZE += data_size
-            
+            self._setup_input()
+            self.initialized = True
+            logger.info(f"Audio input handler initialized (rate={self.sample_rate}, channels={self.channels}, chunk={self.chunk_size})")
             return True
         except Exception as e:
-            logger.error("Error in pydub fallback: %s", str(e))
+            logger.error(f"Error initializing audio input handler: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-    
-    def _resample_with_scipy(self, audio_data, orig_sr, target_sr):
-        """Resample audio using scipy as a fallback when librosa is not available
-        
-        Parameters
-        ----------
-        audio_data : numpy.ndarray
-            Audio data to resample
-        orig_sr : int
-            Original sample rate
-        target_sr : int
-            Target sample rate
-            
-        Returns
-        -------
-        numpy.ndarray
-            Resampled audio data
-        """
-        logger.info("Using scipy for resampling")
-        
-        # Calculate resampling ratio
-        ratio = target_sr / orig_sr
-        
-        # Calculate output length
-        output_length = int(len(audio_data) * ratio)
-        
-        # Use scipy's resample function
-        resampled = signal.resample(audio_data, output_length)
-        
-        return resampled
-        
-    def read_audio_stream(self):
-        """Read a chunk from the audio stream"""
-        if self.input_type == INPUT_MIC and self.stream:
-            try:
-                data = self.stream.read(self.chunk_size)
-                return np.frombuffer(data, dtype=np.int16)
-            except Exception as e:
-                logger.error("Error reading from audio stream: %s", str(e))
-                return np.zeros(self.chunk_size, dtype=np.int16)
-        return None
-        
-    def read_audio_file_chunk(self):
-        """Read a chunk from the audio file"""
-        if self.input_type != INPUT_FILE:
-            return None
-            
-        # MP3 handling
-        if self._is_mp3 and self._mp3_player:
-            try:
-                data = self._mp3_player.read_chunk(self.chunk_size)
-                if data is None or len(data) == 0:
-                    if self.loop and not self._audio_finished:
-                        logger.info("End of MP3 file reached, looping...")
-                        self._mp3_player.rewind()
-                        data = self._mp3_player.read_chunk(self.chunk_size)
-                    else:
-                        logger.info("End of MP3 file reached")
-                        self._audio_finished = True
-                        return np.zeros(self.chunk_size, dtype=np.int16)
-                return data
-            except Exception as e:
-                logger.error("Error reading MP3 chunk: %s", str(e))
-                return np.zeros(self.chunk_size, dtype=np.int16)
-                
-        # WAV/FLAC/OGG handling
-        elif self.wav_data is not None:
-            if self.wav_idx + self.chunk_size <= len(self.wav_data):
-                # Read the next chunk
-                chunk = self.wav_data[self.wav_idx:self.wav_idx + self.chunk_size]
-                self.wav_idx += self.chunk_size
-                return chunk
-            else:
-                # End of file
-                if self.loop and not self._audio_finished:
-                    logger.info("End of audio file reached, looping...")
-                    self.wav_idx = 0
-                    return self.read_audio_file_chunk()
-                else:
-                    logger.info("End of audio file reached")
-                    self._audio_finished = True
-                    return np.zeros(self.chunk_size, dtype=np.int16)
-        
-        return None
-        
-    def input_thread_function(self):
-        """Thread function for processing audio input"""
-        logger.info("Starting audio input thread")
-        self._thread_running = True
-        
-        # Initialize buffer
-        if self._data_buffer is None:
-            self._data_buffer = deque(maxlen=MAX_BUFFER_SIZE)
-            
-        self._start_time = time.time()
-        self._running = True
-        
-        # Main processing loop
-        while not self._stop_event.is_set() and self._running:
-            # Check if paused
-            if self._pause_event.is_set():
-                time.sleep(0.01)
-                continue
-                
-            # Process based on input type
-            if self.input_type == INPUT_MIC:
-                # Process microphone input
-                chunk = self.read_audio_stream()
-                if chunk is not None and len(chunk) > 0:
-                    with self._lock:
-                        self._data_buffer.append(chunk)
-                        self.chunks_processed += 1
-            elif self.input_type == INPUT_FILE:
-                # Process file input
-                chunk = self.read_audio_file_chunk()
-                if chunk is not None:
-                    with self._lock:
-                        self._data_buffer.append(chunk)
-                        self.chunks_processed += 1
-                        
-                    # Sleep to simulate real-time playback
-                    # Calculate time to sleep based on chunk size and sample rate
-                    sleep_time = self.chunk_size / self.output_rate
-                    time.sleep(sleep_time * 0.9)  # Slightly less to account for processing
-            
-            # Check if we have enough data in the buffer
-            if len(self._data_buffer) > BUFFER_MIN_READ:
-                # Signal that a chunk is ready
-                self.chunk_ready = True
-            
-            # Check if audio file has finished and we've processed all chunks
-            if self._audio_finished and len(self._data_buffer) == 0:
-                logger.info("Audio file finished and buffer empty")
-                self._running = False
-                
-        # End of thread
-        self._end_time = time.time()
-        logger.info("Audio input thread finished. Runtime: %.2f seconds", 
-                   self._end_time - self._start_time)
-        self._thread_running = False
-        
+
     def start(self):
-        """Start the audio input handler"""
-        if self._thread_running:
-            logger.warning("Audio input thread already running")
+        """Start the audio input handler."""
+        if self.running:
+            logger.warning("Audio input handler already running")
+            return True
+            
+        if not self.initialized and not self.initialize():
+            logger.error("Failed to initialize audio input handler")
             return False
             
-        # Reset flags
-        self._stop_event.clear()
-        self._pause_event.clear()
-        self._audio_finished = False
-        self.chunk_ready = False
-        self.chunks_processed = 0
-        self.wav_idx = 0
-        
-        # Setup based on input type
-        if self.input_type == INPUT_MIC:
-            # Setup PyAudio for microphone input
-            if not self.setup_pyaudio_stream():
-                logger.error("Failed to setup PyAudio stream")
-                return False
-        elif self.input_type == INPUT_FILE:
-            # Load audio file
-            if not self.load_audio_file():
-                logger.error("Failed to load audio file")
-                return False
-        else:
-            logger.error("Invalid input type: %s", self.input_type)
+        try:
+            self.running = True
+            self.start_time = time.time()
+            self.thread = threading.Thread(target=self._input_thread)
+            self.thread.daemon = True
+            self.thread.start()
+            logger.info("Audio input handler started")
+            return True
+        except Exception as e:
+            logger.error(f"Error starting audio input handler: {e}")
+            self.running = False
             return False
-            
-        # Start the input thread
-        self.input_thread = threading.Thread(target=self.input_thread_function)
-        self.input_thread.daemon = True
-        self.input_thread.start()
-        
-        logger.info("Audio input handler started with input type: %s", self.input_type)
-        self.initialized = True
-        return True
-        
+
     def stop(self):
-        """Stop the audio input handler"""
-        logger.info("Stopping audio input handler")
-        
-        # Signal the thread to stop
-        self._stop_event.set()
-        self._running = False
+        """Stop the audio input handler."""
+        if not self.running:
+            logger.info("Audio input handler already stopped")
+            return True
+            
+        self.running = False
         
         # Wait for thread to finish
-        if self.input_thread and self.input_thread.is_alive():
-            self.input_thread.join(timeout=2.0)
+        if self.thread and self.thread.is_alive():
+            logger.info("Waiting for audio input thread to finish...")
+            self.thread.join(timeout=2.0)
+            runtime = time.time() - self.start_time
+            logger.info(f"Audio input thread finished. Runtime: {runtime:.2f} seconds")
             
-        # Clean up resources
-        if self._is_mic:
-            self.close_pyaudio_stream()
+        # Clear buffer
+        with self.buffer_lock:
+            self.buffer.clear()
             
-        # Clear buffers
-        if self._data_buffer:
-            self._data_buffer.clear()
-            
-        # Reset variables
-        self.chunk_ready = False
-        self._thread_running = False
-        
-        logger.info("Audio input handler stopped")
-        
-    def pause(self):
-        """Pause audio processing"""
-        if not self._pause_event.is_set():
-            logger.info("Pausing audio input")
-            self._pause_event.set()
-            self._pause_time = time.time()
-            
-    def resume(self):
-        """Resume audio processing"""
-        if self._pause_event.is_set():
-            logger.info("Resuming audio input")
-            self._pause_event.clear()
-            
-    def is_paused(self):
-        """Check if audio processing is paused"""
-        return self._pause_event.is_set()
-        
-    def is_running(self):
-        """Check if the audio input handler is running"""
-        return self._thread_running and self._running
-        
-    def has_audio_finished(self):
-        """Check if audio file has finished playing"""
-        return self._audio_finished and not self._thread_running
-        
-    def read_audio_chunk(self):
-        """Read an audio chunk from the buffer"""
-        if not self._thread_running or len(self._data_buffer) == 0:
-            return np.zeros(self.chunk_size, dtype=np.int16)
-            
-        with self._lock:
-            if len(self._data_buffer) > 0:
-                chunk = self._data_buffer.popleft()
-                self.chunk_ready = len(self._data_buffer) > 0
-                return chunk
-                
-        return np.zeros(self.chunk_size, dtype=np.int16)
-    
-    def get_audio_data(self):
-        """Get audio data from the input source
+        return True
 
-        Returns
-        -------
-        numpy.ndarray
-            Audio data as a numpy array
-        """
-        # Get audio data
-        if self.input_type == INPUT_MIC:
-            # Read from mic
-            try:
-                y = self.read_audio_chunk()
-                if y is None or len(y) == 0:
-                    y = np.zeros(self.chunk_size, dtype=np.int16)
-            except Exception as e:
-                logger.error("Error reading audio chunk: %s", str(e))
-                y = np.zeros(self.chunk_size, dtype=np.int16)
-        elif self.input_type == INPUT_FILE:
-            # Read from file
-            y = self.read_audio_chunk()
-            if y is None:
-                y = np.zeros(self.chunk_size, dtype=np.int16)
-        else:
-            # No input
-            y = np.zeros(self.chunk_size, dtype=np.int16)
-
-        self.current_chunk = y
-        return y
-
-    def get_melbank(self, y=None):
-        """Calculate the melbank
-
-        Parameters
-        ----------
-        y : numpy.ndarray, optional
-            Audio data, by default None
-
-        Returns
-        -------
-        numpy.ndarray
-            Melbank values
-        """
-        # This is a placeholder - in a full implementation, 
-        # this would calculate the mel spectrogram
-        if y is None:
-            y = self.current_chunk if self.current_chunk is not None else np.zeros(self.chunk_size)
-        
-        # Convert to float32
-        y_float = y.astype(np.float32) / 32768.0
-        
-        # Simple FFT implementation for visualization
-        N = len(y_float)
-        fft_output = np.abs(np.fft.rfft(y_float))
-        
-        # Simple mel-like scaling (for visualization only)
-        num_mel_bands = 24
-        fft_len = len(fft_output)
-        mel_bands = np.zeros(num_mel_bands)
-        
-        # Rough approximation of mel scaling
-        for i in range(num_mel_bands):
-            start_idx = int(fft_len * (i / num_mel_bands)**2)
-            end_idx = int(fft_len * ((i+1) / num_mel_bands)**2)
-            if end_idx > start_idx:
-                mel_bands[i] = np.mean(fft_output[start_idx:end_idx])
-        
-        # Normalize
-        if np.max(mel_bands) > 0:
-            mel_bands = mel_bands / np.max(mel_bands)
-        
-        return mel_bands
-
-    # Compatibility methods for the main script
-    
-    def get_audio_chunk(self):
-        """Compatibility method for the main script"""
-        return self.get_audio_data()
-        
     def close(self):
-        """Compatibility method for the main script"""
-        self.stop()
-        
-    def initialize(self):
-        """Compatibility method for the main script"""
-        return self.start()
-        
-    def is_active(self):
-        """Compatibility method for the main script"""
-        return self.is_running()
-        
-    def get_frequency_bands(self, num_bands=24):
-        """Get frequency bands from audio data
-        
-        Parameters
-        ----------
-        num_bands : int, optional
-            Number of frequency bands, by default 24
+        """Close the audio input handler and release resources."""
+        if self.running:
+            self.stop()
             
-        Returns
-        -------
-        numpy.ndarray
-            Frequency bands
-        """
-        # Use the melbank as frequency bands
-        return self.get_melbank()
-        
-    def get_volume(self):
-        """Get current volume level
-        
-        Returns
-        -------
-        float
-            Volume level between 0 and 1
-        """
-        if self.current_chunk is None:
-            return 0.0
-            
-        # Calculate RMS volume
-        rms = np.sqrt(np.mean(self.current_chunk.astype(np.float32)**2))
-        
-        # Normalize to 0-1 range
-        volume = min(1.0, max(0.0, rms / 32768.0))
-        
-        return volume
+        if self.initialized:
+            try:
+                self._cleanup()
+                logger.info("Audio input handler closed")
+            except Exception as e:
+                logger.error(f"Error closing audio input handler: {e}")
+                
+        self.initialized = False
+        return True
 
-    def is_initialized(self):
-        """
-        Check if audio input is properly initialized.
+    def get_audio_chunk(self):
+        """Get a chunk of audio data.
         
         Returns:
-            bool: True if initialized, False otherwise.
+            numpy.ndarray: Audio data or None if no data is available
+        """
+        if not self.running:
+            return None
+            
+        if self.thread_exception:
+            logger.error(f"Audio input thread exception: {self.thread_exception}")
+            self.thread_exception = None
+            return None
+            
+        with self.buffer_lock:
+            if len(self.buffer) > 0:
+                return self.buffer.popleft()
+            else:
+                return None
+
+    def is_active(self):
+        """Check if the audio input handler is active.
+        
+        Returns:
+            bool: True if the handler is active, False otherwise
+        """
+        return self.running and not self.has_audio_finished()
+
+    def is_initialized(self):
+        """Check if the audio input handler is initialized.
+        
+        Returns:
+            bool: True if the handler is initialized, False otherwise
         """
         return self.initialized
 
-if __name__ == "__main__":
-    # Set up logging
-    logging.basicConfig(level=logging.INFO)
-    
-    # Test the audio input handler
-    config = {
-        "SAMPLE_RATE": 48000,
-        "CHUNK_SIZE": 1024,
-        "CHANNELS": 1,
-        "MIC_RATE": 48000,
-        "LOOP": True
-    }
-    
-    # Test with mic
-    print("Testing with microphone input...")
-    audio_handler = AudioInputHandler(config, device_id="mic")
-    audio_handler.start()
-    
-    # Read some chunks
-    for i in range(10):
-        data = audio_handler.get_audio_data()
-        print(f"Chunk {i}: shape={data.shape}, min={np.min(data)}, max={np.max(data)}")
-        time.sleep(0.1)
-    
-    # Stop
-    audio_handler.stop()
-    print("Microphone test complete")
-    
-    # Test with file
-    if os.path.exists("test.mp3"):
-        print("Testing with MP3 file input...")
-        audio_handler = AudioInputHandler(config, device_id="test.mp3")
-        audio_handler.start()
+    def has_audio_finished(self):
+        """Check if the audio has finished.
         
-        # Read some chunks
-        for i in range(10):
-            data = audio_handler.get_audio_data()
-            print(f"Chunk {i}: shape={data.shape}, min={np.min(data)}, max={np.max(data)}")
-            time.sleep(0.1)
+        Returns:
+            bool: True if the audio has finished, False otherwise
+        """
+        # Base implementation for continuous sources (mic, line-in)
+        # File-based sources will override this
+        return False
+
+    def get_volume(self):
+        """Get the current audio volume.
         
-        # Stop
-        audio_handler.stop()
-        print("File test complete")
-    else:
-        print("No test.mp3 file found for testing") 
+        Returns:
+            float: Current volume level (0.0 to 1.0)
+        """
+        return self.current_volume
+
+    def get_sample_rate(self):
+        """Get the sample rate.
+        
+        Returns:
+            int: Sample rate in Hz
+        """
+        return self.sample_rate
+
+    def get_channels(self):
+        """Get the number of channels.
+        
+        Returns:
+            int: Number of channels
+        """
+        return self.channels
+
+    def get_chunk_size(self):
+        """Get the chunk size.
+        
+        Returns:
+            int: Chunk size in frames
+        """
+        return self.chunk_size
+
+    def get_progress(self):
+        """Get the current playback progress.
+        
+        Returns:
+            float: Current progress (0.0 to 1.0)
+        """
+        if self.duration <= 0:
+            return 0.0
+        return min(1.0, self.position / self.duration)
+
+    def _calculate_volume(self, data_array):
+        """Calculate the volume of an audio chunk.
+        
+        Args:
+            data_array (numpy.ndarray): Audio data
+            
+        Returns:
+            float: Volume level (0.0 to 1.0)
+        """
+        if data_array is None or len(data_array) == 0:
+            return 0.0
+            
+        try:
+            # Ensure we're working with a clean array
+            if not np.all(np.isfinite(data_array)):
+                data_array = np.nan_to_num(data_array)
+                
+            # Calculate RMS (root mean square) volume
+            # For multichannel audio, average across channels
+            if len(data_array.shape) > 1 and data_array.shape[1] > 1:
+                # Multi-channel data
+                squared = np.square(data_array)
+                if not np.all(np.isfinite(squared)):
+                    squared = np.nan_to_num(squared)
+                    
+                mean_squares = np.mean(squared)
+                if not np.isfinite(mean_squares) or mean_squares < 0:
+                    return 0.0
+                    
+                rms = np.sqrt(mean_squares)
+            else:
+                # Mono data
+                squared = np.square(data_array)
+                if not np.all(np.isfinite(squared)):
+                    squared = np.nan_to_num(squared)
+                    
+                mean_squares = np.mean(squared)
+                if not np.isfinite(mean_squares) or mean_squares < 0:
+                    return 0.0
+                    
+                rms = np.sqrt(mean_squares)
+                
+            # Normalize to 0.0-1.0 range (assuming audio is normalized to -1.0 to 1.0)
+            # Apply some non-linear scaling to make it more responsive
+            volume = np.power(min(1.0, rms), 0.5)
+            
+            # Check for NaN or Inf values
+            if not np.isfinite(volume):
+                return 0.0
+                
+            return float(volume)
+        except Exception as e:
+            logger.error(f"Error calculating volume: {e}")
+            return 0.0
+
+    @abstractmethod
+    def _setup_input(self):
+        """Set up the audio input source."""
+        pass
+
+    @abstractmethod
+    def _input_thread(self):
+        """Thread for processing audio input."""
+        pass
+
+    @abstractmethod
+    def _cleanup(self):
+        """Clean up resources."""
+        pass
+
+
+class FileAudioInput(AudioInputHandler):
+    """Audio input handler for audio files."""
+    
+    def __init__(self, file_path, sample_rate=None, channels=None, chunk_size=DEFAULT_CHUNK_SIZE,
+                 buffer_size=DEFAULT_BUFFER_SIZE):
+        """Initialize the file audio input handler.
+        
+        Args:
+            file_path (str): Path to the audio file
+            sample_rate (int, optional): Sample rate to use (None for file's native rate)
+            channels (int, optional): Number of channels to use (None for file's native channels)
+            chunk_size (int): Size of audio chunks in frames
+            buffer_size (int): Size of the buffer in chunks
+        """
+        # Use default values initially, will be updated from file
+        super().__init__(
+            sample_rate=sample_rate or DEFAULT_SAMPLE_RATE,
+            channels=channels or DEFAULT_CHANNELS,
+            chunk_size=chunk_size,
+            buffer_size=buffer_size
+        )
+        
+        self.file_path = file_path
+        self.requested_sample_rate = sample_rate
+        self.requested_channels = channels
+        
+        # Audio data
+        self.audio_data = None
+        self.file_sample_rate = None
+        self.file_channels = None
+        self.format = None
+        self.current_frame = 0
+        self.total_frames = 0
+        self.finished = False
+        
+        # File format detection
+        self.file_exists = False
+        if self.file_path:
+            self.file_exists = os.path.isfile(self.file_path)
+            if not self.file_exists:
+                logger.error(f"File not found: {file_path}")
+            else:
+                self.format = self._detect_format(file_path)
+                logger.info(f"Detected audio format: {self.format}")
+
+    def has_audio_finished(self):
+        """Check if the audio file has finished playing.
+        
+        Returns:
+            bool: True if the audio has finished, False otherwise
+        """
+        return self.finished
+
+    def _detect_format(self, file_path):
+        """Detect the format of an audio file.
+        
+        Args:
+            file_path (str): Path to the audio file
+            
+        Returns:
+            str: Audio format (wav, mp3, etc.) or None if unknown
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        # Handle case-insensitive extensions
+        if ext in ['.wav', '.wave']:
+            return 'wav'
+        elif ext in ['.mp3']:
+            return 'mp3'
+        elif ext in ['.ogg', '.oga']:
+            return 'ogg'
+        elif ext in ['.flac']:
+            return 'flac'
+        elif ext in ['.m4a', '.aac']:
+            return 'aac'
+        else:
+            logger.warning(f"Unknown audio format: {ext}")
+            return None
+
+    def _setup_input(self):
+        """Set up the audio file input."""
+        if not self.file_exists:
+            raise FileNotFoundError(f"File not found: {self.file_path}")
+            
+        if not self.format:
+            raise ValueError(f"Unsupported audio format: {self.file_path}")
+            
+        logger.info(f"Loading audio file: {os.path.basename(self.file_path)}")
+        
+        # Choose the best available loader based on format and available libraries
+        if self.format == 'wav' and HAS_SOUNDFILE:
+            self._load_with_soundfile()
+        elif HAS_LIBROSA:
+            self._load_with_librosa()
+        elif HAS_SOUNDFILE:
+            self._load_with_soundfile()
+        elif HAS_PYDUB:
+            self._load_with_pydub()
+        else:
+            raise ImportError("No suitable audio library found. Install soundfile, librosa, or pydub.")
+            
+        # Update duration and channel count
+        self.total_frames = len(self.audio_data)
+        self.duration = self.total_frames / self.file_sample_rate
+        
+        # Use requested sample rate and channels if provided, otherwise use file's native values
+        self.sample_rate = self.requested_sample_rate or self.file_sample_rate
+        self.channels = self.requested_channels or self.file_channels
+        
+        logger.info(f"Audio file loaded: {self.total_frames} samples, {self.file_sample_rate} Hz")
+        
+        return True
+
+    def _load_with_soundfile(self):
+        """Load audio file using soundfile."""
+        try:
+            audio_data, self.file_sample_rate = sf.read(self.file_path, dtype='float32')
+            
+            # Handle mono/stereo conversion
+            if len(audio_data.shape) == 1:  # Mono
+                self.file_channels = 1
+                # Convert to 2D array for consistent handling
+                audio_data = audio_data.reshape(-1, 1)
+            else:  # Multi-channel
+                self.file_channels = audio_data.shape[1]
+                
+            # Convert to float32 and normalize to -1.0 to 1.0
+            if np.max(np.abs(audio_data)) > 1.0:
+                audio_data = audio_data / np.max(np.abs(audio_data))
+                
+            self.audio_data = audio_data
+            logger.info(f"Loading {os.path.basename(self.file_path)} with soundfile")
+            
+        except Exception as e:
+            logger.error(f"Error loading with soundfile: {e}")
+            raise
+
+    def _load_with_librosa(self):
+        """Load audio file using librosa."""
+        try:
+            audio_data, self.file_sample_rate = librosa.load(
+                self.file_path, 
+                sr=self.requested_sample_rate or None,  # Use None for native sample rate
+                mono=False  # Keep all channels
+            )
+            
+            # Librosa loads audio as mono by default if mono=True, or as (n_channels, n_samples) if mono=False
+            if len(audio_data.shape) == 1:  # Mono
+                self.file_channels = 1
+                # Convert to (n_samples, n_channels) format
+                audio_data = audio_data.reshape(-1, 1)
+            else:  # Multi-channel, shape is (n_channels, n_samples)
+                self.file_channels = audio_data.shape[0]
+                # Transpose to (n_samples, n_channels) format
+                audio_data = audio_data.T
+                
+            # Already normalized by librosa
+            self.audio_data = audio_data
+            logger.info(f"Loading {os.path.basename(self.file_path)} with librosa")
+            
+        except Exception as e:
+            logger.error(f"Error loading with librosa: {e}")
+            raise
+
+    def _load_with_pydub(self):
+        """Load audio file using pydub."""
+        try:
+            audio_segment = AudioSegment.from_file(self.file_path)
+            
+            # Get audio properties
+            self.file_sample_rate = audio_segment.frame_rate
+            self.file_channels = audio_segment.channels
+            
+            # Convert to numpy array
+            samples = np.array(audio_segment.get_array_of_samples())
+            
+            # Reshape for multi-channel audio
+            if self.file_channels > 1:
+                samples = samples.reshape((-1, self.file_channels))
+                
+            # Convert to float32 and normalize to -1.0 to 1.0
+            if samples.dtype != np.float32:
+                # Get max value based on sample width
+                max_value = float(1 << (8 * audio_segment.sample_width - 1))
+                samples = samples.astype(np.float32) / max_value
+                
+            self.audio_data = samples
+            logger.info(f"Loading {os.path.basename(self.file_path)} with pydub")
+            
+        except Exception as e:
+            logger.error(f"Error loading with pydub: {e}")
+            raise
+
+    def _input_thread(self):
+        """Process audio file data in a separate thread."""
+        try:
+            # Initialize position tracking
+            self.position = 0
+            self.current_frame = 0
+            self.finished = False
+            last_time = time.time()
+            
+            # Process until stopped or end of file
+            while self.running and self.current_frame < self.total_frames:
+                # Calculate the next chunk
+                end_frame = min(self.current_frame + self.chunk_size, self.total_frames)
+                chunk = self.audio_data[self.current_frame:end_frame]
+                
+                # Perform resampling if needed
+                if self.sample_rate != self.file_sample_rate:
+                    # Simple resampling by repeating or skipping samples
+                    # For production, use a proper resampling library like librosa or scipy
+                    rate_ratio = self.sample_rate / self.file_sample_rate
+                    new_len = int(len(chunk) * rate_ratio)
+                    indices = np.linspace(0, len(chunk) - 1, new_len)
+                    chunk = np.array([chunk[int(i)] for i in indices])
+                
+                # Channel conversion if needed
+                if self.channels != self.file_channels:
+                    if self.file_channels == 1 and self.channels == 2:
+                        # Mono to stereo: duplicate the channel
+                        chunk = np.column_stack((chunk, chunk))
+                    elif self.file_channels == 2 and self.channels == 1:
+                        # Stereo to mono: average the channels
+                        chunk = np.mean(chunk, axis=1, keepdims=True)
+                    else:
+                        # More complex channel conversions not implemented
+                        logger.warning(f"Unsupported channel conversion: {self.file_channels} to {self.channels}")
+                
+                # Calculate volume
+                self.current_volume = self._calculate_volume(chunk)
+                
+                # Add to buffer
+                with self.buffer_lock:
+                    self.buffer.append(chunk)
+                
+                # Update position
+                self.current_frame = end_frame
+                current_time = time.time()
+                self.position = self.current_frame / self.file_sample_rate
+                
+                # Sleep to simulate real-time processing and prevent buffer overflow
+                buffer_fullness = len(self.buffer) / self.buffer.maxlen
+                if buffer_fullness > 0.8:
+                    # Buffer getting full, slow down
+                    time.sleep(0.01)
+                
+                # Check if we've reached the end
+                if self.current_frame >= self.total_frames:
+                    logger.info("End of audio file reached")
+                    self.finished = True
+                    break
+                
+            # Mark as finished when thread exits
+            self.finished = True
+            
+        except Exception as e:
+            logger.error(f"Error in file input thread: {e}")
+            import traceback
+            traceback.print_exc()
+            self.thread_exception = e
+            self.finished = True
+
+    def _cleanup(self):
+        """Clean up resources."""
+        # Release memory
+        self.audio_data = None
+
+
+class MicrophoneAudioInput(AudioInputHandler):
+    """Audio input handler for microphone input."""
+    
+    def __init__(self, device_id=None, sample_rate=DEFAULT_SAMPLE_RATE, channels=DEFAULT_CHANNELS,
+                 chunk_size=DEFAULT_CHUNK_SIZE, buffer_size=DEFAULT_BUFFER_SIZE):
+        """Initialize the microphone audio input handler.
+        
+        Args:
+            device_id: Device ID or name for the microphone (None for default)
+            sample_rate (int): Sample rate in Hz
+            channels (int): Number of channels
+            chunk_size (int): Size of audio chunks in frames
+            buffer_size (int): Size of the buffer in chunks
+        """
+        super().__init__(
+            sample_rate=sample_rate,
+            channels=channels,
+            chunk_size=chunk_size,
+            buffer_size=buffer_size
+        )
+        
+        self.device_id = device_id
+        
+        # PyAudio resources
+        self.pyaudio = None
+        self.stream = None
+        
+        # Check if PyAudio is available
+        if not HAS_PYAUDIO and not HAS_SOUNDDEVICE:
+            logger.error("Neither PyAudio nor SoundDevice available. Cannot use microphone input.")
+        
+    def _setup_input(self):
+        """Set up the microphone input."""
+        if HAS_SOUNDDEVICE:
+            return self._setup_sounddevice()
+        elif HAS_PYAUDIO:
+            return self._setup_pyaudio()
+        else:
+            raise ImportError("No suitable audio library found. Install PyAudio or SoundDevice.")
+    
+    def _setup_sounddevice(self):
+        """Set up using sounddevice."""
+        try:
+            # List available devices
+            devices = sd.query_devices()
+            logger.info(f"Found {len(devices)} audio devices")
+            
+            # Find the device
+            device_id = self.device_id
+            if device_id is None:
+                device_id = sd.default.device[0]  # Default input device
+                logger.info(f"Using default input device: {device_id}")
+            
+            # Get device info
+            try:
+                device_info = sd.query_devices(device_id, 'input')
+                logger.info(f"Using input device: {device_info['name']}")
+                
+                # Update parameters based on device capabilities
+                if self.sample_rate not in device_info['default_samplerate']:
+                    logger.warning(f"Requested sample rate {self.sample_rate} not supported by device")
+                    self.sample_rate = int(device_info['default_samplerate'])
+                    logger.info(f"Using device sample rate: {self.sample_rate}")
+                
+                max_channels = device_info['max_input_channels']
+                if self.channels > max_channels:
+                    logger.warning(f"Requested {self.channels} channels, but device only supports {max_channels}")
+                    self.channels = max_channels
+                
+                return True
+            except Exception as e:
+                logger.error(f"Error setting up sounddevice: {e}")
+                return False
+        except Exception as e:
+            logger.error(f"Error setting up sounddevice: {e}")
+            return False
+    
+    def _setup_pyaudio(self):
+        """Set up using PyAudio."""
+        try:
+            self.pyaudio = pyaudio.PyAudio()
+            
+            # List available devices
+            device_count = self.pyaudio.get_device_count()
+            logger.info(f"Found {device_count} audio devices")
+            
+            # Find the device
+            device_index = None
+            if self.device_id is not None:
+                # Try to find the device by ID or name
+                if isinstance(self.device_id, int):
+                    device_index = self.device_id
+                else:
+                    # Search by name
+                    for i in range(device_count):
+                        device_info = self.pyaudio.get_device_info_by_index(i)
+                        if self.device_id.lower() in device_info['name'].lower():
+                            device_index = i
+                            break
+            
+            # If no device found, use default
+            if device_index is None:
+                device_index = self.pyaudio.get_default_input_device_info()['index']
+                logger.info(f"Using default input device: {device_index}")
+            
+            # Get device info
+            try:
+                device_info = self.pyaudio.get_device_info_by_index(device_index)
+                logger.info(f"Using input device: {device_info['name']}")
+                
+                # Check if the device supports the requested format
+                max_channels = int(device_info['maxInputChannels'])
+                if self.channels > max_channels:
+                    logger.warning(f"Requested {self.channels} channels, but device only supports {max_channels}")
+                    self.channels = max_channels
+                
+                # Open the stream
+                self.stream = self.pyaudio.open(
+                    format=pyaudio.paFloat32,
+                    channels=self.channels,
+                    rate=self.sample_rate,
+                    input=True,
+                    input_device_index=device_index,
+                    frames_per_buffer=self.chunk_size
+                )
+                
+                logger.info(f"Microphone input initialized: {self.sample_rate} Hz, {self.channels} channels")
+                return True
+            except Exception as e:
+                logger.error(f"Error setting up PyAudio: {e}")
+                if self.pyaudio:
+                    self.pyaudio.terminate()
+                    self.pyaudio = None
+                return False
+        except Exception as e:
+            logger.error(f"Error setting up PyAudio: {e}")
+            return False
+    
+    def _input_thread(self):
+        """Read audio data in a separate thread."""
+        try:
+            if HAS_SOUNDDEVICE:
+                self._sounddevice_thread()
+            elif HAS_PYAUDIO and self.stream:
+                self._pyaudio_thread()
+            else:
+                raise RuntimeError("No audio input method available")
+        except Exception as e:
+            logger.error(f"Error in microphone input thread: {e}")
+            import traceback
+            traceback.print_exc()
+            self.thread_exception = e
+    
+    def _sounddevice_thread(self):
+        """Thread for processing audio input using sounddevice."""
+        def callback(indata, frames, time, status):
+            if status:
+                logger.warning(f"Sounddevice status: {status}")
+            
+            # Convert to float32 if needed
+            if indata.dtype != np.float32:
+                data = indata.astype(np.float32)
+            else:
+                data = indata.copy()
+            
+            # Calculate volume
+            self.current_volume = self._calculate_volume(data)
+            
+            # Add to buffer
+            with self.buffer_lock:
+                self.buffer.append(data)
+        
+        try:
+            # Start the stream
+            with sd.InputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.chunk_size,
+                channels=self.channels,
+                dtype='float32',
+                callback=callback
+            ):
+                # Just wait until stopped
+                while self.running:
+                    time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Error in sounddevice thread: {e}")
+            raise
+    
+    def _pyaudio_thread(self):
+        """Thread for processing audio input using PyAudio."""
+        try:
+            # Process until stopped
+            while self.running:
+                try:
+                    # Read audio data
+                    data = self.stream.read(self.chunk_size, exception_on_overflow=False)
+                    
+                    # Convert to numpy array
+                    audio_data = np.frombuffer(data, dtype=np.float32)
+                    
+                    # Reshape for multi-channel
+                    if self.channels > 1:
+                        audio_data = audio_data.reshape(-1, self.channels)
+                    else:
+                        audio_data = audio_data.reshape(-1, 1)
+                    
+                    # Calculate volume
+                    self.current_volume = self._calculate_volume(audio_data)
+                    
+                    # Add to buffer
+                    with self.buffer_lock:
+                        self.buffer.append(audio_data)
+                    
+                    # Sleep a bit to prevent high CPU usage
+                    time.sleep(0.001)
+                    
+                except Exception as e:
+                    if self.running:  # Only log errors if still running
+                        logger.error(f"Error reading from microphone: {e}")
+                        time.sleep(0.1)  # Wait before retrying
+            
+        except Exception as e:
+            logger.error(f"Error in PyAudio thread: {e}")
+            raise
+    
+    def _cleanup(self):
+        """Clean up resources."""
+        try:
+            if HAS_PYAUDIO and self.stream:
+                self.stream.stop_stream()
+                self.stream.close()
+                self.stream = None
+                
+            if self.pyaudio:
+                self.pyaudio.terminate()
+                self.pyaudio = None
+                
+            logger.info("Microphone resources released")
+        except Exception as e:
+            logger.error(f"Error closing microphone: {e}")
+            
+    @staticmethod
+    def list_devices():
+        """List available audio input devices.
+        
+        Returns:
+            list: List of available devices
+        """
+        devices = []
+        
+        if HAS_SOUNDDEVICE:
+            try:
+                sd_devices = sd.query_devices()
+                for i, device in enumerate(sd_devices):
+                    if device['max_input_channels'] > 0:
+                        devices.append({
+                            'index': i,
+                            'name': device['name'],
+                            'channels': device['max_input_channels'],
+                            'default': i == sd.default.device[0],
+                            'sample_rates': [int(device['default_samplerate'])],
+                            'api': 'sounddevice'
+                        })
+            except Exception as e:
+                logger.error(f"Error listing sounddevice devices: {e}")
+        
+        if HAS_PYAUDIO:
+            try:
+                p = pyaudio.PyAudio()
+                device_count = p.get_device_count()
+                default_device = p.get_default_input_device_info()['index']
+                
+                for i in range(device_count):
+                    try:
+                        device_info = p.get_device_info_by_index(i)
+                        if device_info['maxInputChannels'] > 0:
+                            devices.append({
+                                'index': i,
+                                'name': device_info['name'],
+                                'channels': device_info['maxInputChannels'],
+                                'default': i == default_device,
+                                'sample_rates': [int(device_info['defaultSampleRate'])],
+                                'api': 'pyaudio'
+                            })
+                    except Exception:
+                        pass  # Skip devices with errors
+                
+                p.terminate()
+            except Exception as e:
+                logger.error(f"Error listing PyAudio devices: {e}")
+        
+        return devices 
+
+class LineInAudioInput(MicrophoneAudioInput):
+    """Audio input handler for line-in input.
+    
+    This is basically the same as MicrophoneAudioInput but specifically
+    targets line-in devices and may have different default settings.
+    """
+    
+    def __init__(self, device_id=None, sample_rate=DEFAULT_SAMPLE_RATE, channels=DEFAULT_CHANNELS,
+                 chunk_size=DEFAULT_CHUNK_SIZE, buffer_size=DEFAULT_BUFFER_SIZE):
+        """Initialize the line-in audio input handler.
+        
+        Args:
+            device_id: Device ID or name for the line-in (None for default)
+            sample_rate (int): Sample rate in Hz
+            channels (int): Number of channels
+            chunk_size (int): Size of audio chunks in frames
+            buffer_size (int): Size of the buffer in chunks
+        """
+        super().__init__(
+            device_id=device_id,
+            sample_rate=sample_rate,
+            channels=channels,
+            chunk_size=chunk_size,
+            buffer_size=buffer_size
+        )
+
+
+class InputHandlerFactory:
+    """Factory for creating audio input handlers."""
+    
+    @staticmethod
+    def create_handler(input_type, device_id=None, sample_rate=None, channels=None, 
+                       chunk_size=DEFAULT_CHUNK_SIZE, buffer_size=DEFAULT_BUFFER_SIZE):
+        """Create an audio input handler.
+        
+        Args:
+            input_type (str): Type of input ('file', 'microphone', 'line-in')
+            device_id: Device ID, path or name
+            sample_rate (int, optional): Sample rate in Hz
+            channels (int, optional): Number of channels
+            chunk_size (int): Size of audio chunks in frames
+            buffer_size (int): Size of the buffer in chunks
+            
+        Returns:
+            AudioInputHandler: Appropriate input handler
+        """
+        logger.info(f"Setting up input type for device ID: {device_id}")
+        
+        if input_type == 'file':
+            handler = FileAudioInput(
+                file_path=device_id,
+                sample_rate=sample_rate,
+                channels=channels,
+                chunk_size=chunk_size,
+                buffer_size=buffer_size
+            )
+            logger.info(f"Input set to file: {os.path.basename(device_id)}")
+            
+        elif input_type == 'microphone':
+            handler = MicrophoneAudioInput(
+                device_id=device_id,
+                sample_rate=sample_rate or DEFAULT_SAMPLE_RATE,
+                channels=channels or DEFAULT_CHANNELS,
+                chunk_size=chunk_size,
+                buffer_size=buffer_size
+            )
+            logger.info(f"Input set to microphone: {device_id or 'default'}")
+            
+        elif input_type == 'line-in':
+            handler = LineInAudioInput(
+                device_id=device_id,
+                sample_rate=sample_rate or DEFAULT_SAMPLE_RATE,
+                channels=channels or DEFAULT_CHANNELS,
+                chunk_size=chunk_size,
+                buffer_size=buffer_size
+            )
+            logger.info(f"Input set to line-in: {device_id or 'default'}")
+            
+        else:
+            raise ValueError(f"Unsupported input type: {input_type}")
+            
+        return handler
+    
+    @staticmethod
+    def get_available_inputs():
+        """Get available audio input sources.
+        
+        Returns:
+            dict: Available inputs by type
+        """
+        inputs = {
+            'file': [],
+            'microphone': [],
+            'line-in': []
+        }
+        
+        # Get microphone and line-in devices
+        devices = MicrophoneAudioInput.list_devices()
+        
+        for device in devices:
+            # Add to appropriate category
+            if 'line' in device['name'].lower() or 'input' in device['name'].lower():
+                inputs['line-in'].append(device)
+            else:
+                inputs['microphone'].append(device)
+        
+        return inputs 

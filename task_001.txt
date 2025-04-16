@@ -1,0 +1,67 @@
+# Task ID: 1
+# Title: Implement Audio Input Capture System
+# Status: in-progress
+# Dependencies: None
+# Priority: high
+# Description: Create a robust system to capture audio from microphone, line-in, and files
+# Details:
+Develop modules to handle audio input from various sources with consistent interfaces. Support WAV, MP3, FLAC, OGG, and AAC file formats. Implement proper error handling and device detection. Create an abstraction layer that handles different input sources uniformly.
+
+# Test Strategy:
+Unit tests with mock inputs, integration tests with sample files, real-time testing with microphone input
+
+# Subtasks:
+## 1. Implement audio file loading and buffering for various formats [pending]
+### Dependencies: None
+### Description: Create robust functionality to load and properly buffer audio data from files including WAV, MP3, FLAC, OGG and AAC formats
+### Details:
+
+
+## 2. Implement microphone audio capture functionality [pending]
+### Dependencies: None
+### Description: Develop a reliable system for capturing real-time audio input from microphone sources with proper error handling
+### Details:
+
+
+## 3. Create visual LED output controller [pending]
+### Dependencies: None
+### Description: Build virtual and physical LED controller system that properly displays audio visualization based on processed audio data
+### Details:
+
+
+## 4. Implement file playback functionality [pending]
+### Dependencies: None
+### Description: Create robust file playback with proper initialization, buffer management, and error handling. Support play, stop, pause, and resume functions.
+### Details:
+Implement proper audio file loading, buffering, and playback pipeline. Files should play completely without stopping prematurely. Ensure PyAudio callback handles buffer underflow properly. Implement UI controls that correctly map to playback actions.
+
+## 5. Remove mock/dummy audio code [pending]
+### Dependencies: None
+### Description: Replace all mock/stub/dummy code with fully functional implementation for audio playback.
+### Details:
+Identify and remove all mock functionality in audio-related code, especially _start_dummy_mode and _dummy_playback_thread. Ensure audio initialization properly falls back to alternate methods rather than to visualization-only mode. Fix Play button functionality to properly start actual audio playback.
+
+## 6. Implement pause/resume functionality [pending]
+### Dependencies: None
+### Description: Add capability to pause and resume audio playback with proper UI controls.
+### Details:
+Implement pause/resume logic in AudioPlayer class. Update the UI to include pause button functionality. Ensure the audio stream properly pauses without losing position and can resume from the same position. Update player state tracking to include PAUSED state.
+
+## 7. Fix audio playback consistency issues [in-progress]
+### Dependencies: None
+### Description: Resolve issues with premature playback stopping and ensure complete audio file playback
+### Details:
+Debug and fix issues causing audio files to stop playing prematurely (especially with "i_ran_so_far_away-flock_of_seagulls.wav"). Ensure PyAudio callbacks handle all error conditions properly. Implement proper restart of audio playback when the play button is pressed multiple times. Add improved logging for playback diagnostics.
+
+## 8. Enhance error handling for audio device initialization [pending]
+### Dependencies: None
+### Description: Implement robust error handling for audio device detection and initialization failures
+### Details:
+Create a comprehensive error handling system for audio device initialization failures. Implement proper fallback mechanisms to handle ALSA errors and PCM device unavailability. Add detailed error reporting for users to understand audio issues. Implement device detection that works reliably across different operating systems.
+
+## 9. Implement comprehensive testing for audio capture system [pending]
+### Dependencies: None
+### Description: Develop and implement a testing framework to verify audio input functionality across various formats and sources
+### Details:
+Create unit tests for audio loading mechanisms across all supported formats (WAV, MP3, FLAC, OGG, AAC). Implement integration tests to verify proper playback behavior including pause/resume and stopping. Design stress tests to identify buffer handling issues. Develop automated tests to verify proper cleanup of resources.
+
