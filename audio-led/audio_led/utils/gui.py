@@ -270,6 +270,7 @@ class Application:
         self.available_inputs = []
         self.input_source = None
         self.input_source_selected = False
+        self.audio_player = None
         
         # Set GUI mode flag in the config so input_handler knows not to auto-select
         if 'audio' not in self.config:
@@ -408,6 +409,26 @@ class Application:
                 
                 # Set the audio input in the processor
                 self.audio_processor.audio_input = audio_input
+                
+                # Start audio playback if input is a file
+                if audio_input.input_type == 1:  # INPUT_FILE
+                    try:
+                        from audio_led.audio.player import AudioPlayer
+                        logger.info("Initializing audio playback")
+                        self.audio_player = AudioPlayer(self.env_config)
+                        self.audio_player.connect_to_input(audio_input)
+                        self.audio_player.start()
+                        logger.info("Audio playback started")
+                    except ImportError as e:
+                        logger.warning(f"Could not import AudioPlayer: {e}")
+                        logger.warning("Audio playback not available")
+                        self.audio_player = None
+                    except Exception as e:
+                        logger.warning(f"Could not start audio playback: {e}")
+                        logger.exception(e)
+                        self.audio_player = None
+                else:
+                    self.audio_player = None
                 
                 # Start the audio processor and thread
                 self.audio_processor.running = True
@@ -927,6 +948,15 @@ class Application:
         # Set a flag to indicate that cleanup is happening from the main thread
         # This prevents the audio thread from attempting its own cleanup
         self._cleanup_in_progress = True
+        
+        # Stop the audio player if it exists
+        if hasattr(self, 'audio_player') and self.audio_player:
+            try:
+                logger.info("Stopping audio player...")
+                self.audio_player.stop()
+                logger.info("Audio player stopped")
+            except Exception as e:
+                logger.error(f"Error stopping audio player: {e}")
         
         # Stop the audio processor from the main thread
         if hasattr(self, 'audio_processor') and self.audio_processor:

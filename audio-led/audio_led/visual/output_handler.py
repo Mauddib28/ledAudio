@@ -850,6 +850,43 @@ class OutputHandler:
         
         logger.info(f"Output handler initialized (method={self.output_method}, outputs={len(self.outputs)})")
     
+    @staticmethod
+    def list_output_methods():
+        """
+        List all available output methods on the current system.
+        
+        Returns:
+            list: A list of available output methods
+        """
+        output_methods = []
+        
+        # Check for display output (requires pygame)
+        if HAS_PYGAME:
+            output_methods.append(f"{OUTPUT_DISPLAY} (PyGame)")
+        
+        # Check for GPIO support
+        try:
+            # Try to import pigpio for Raspberry Pi
+            import pigpio
+            output_methods.append(f"{OUTPUT_LED_PWM} (Raspberry Pi)")
+        except ImportError:
+            pass
+            
+        try:
+            # Check for rpi_ws281x for LED strips
+            import rpi_ws281x
+            output_methods.append(f"{OUTPUT_LED_STRIP} (WS2812/NeoPixel)")
+        except ImportError:
+            pass
+        
+        # File output is always available
+        output_methods.append(f"{OUTPUT_FILE} (Debug/Testing)")
+        
+        # Add stub output for testing
+        output_methods.append(f"{OUTPUT_NONE} (No output)")
+        
+        return output_methods
+    
     def _auto_detect_output_method(self):
         """
         Auto-detect the appropriate output method based on the environment.

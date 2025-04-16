@@ -632,10 +632,11 @@ class DummyInput(AudioInput):
 
 class AudioProcessor:
     """
-    Audio processor for the Audio LED Visualization System.
+    Audio processing engine for the Audio LED Visualization System.
     
-    This class handles audio input and processing, providing
-    real-time analysis for visualization.
+    This class handles real-time audio processing, applying various
+    transforms and analysis algorithms to extract meaningful features
+    for visualization.
     """
     
     # Constants
@@ -953,6 +954,44 @@ class AudioProcessor:
         if self.input_device is not None:
             self.input_device.stop()
             self.input_device = None
+
+    @staticmethod
+    def list_audio_devices():
+        """
+        List available audio input devices.
+        
+        Returns:
+            list: List of available audio input devices
+        """
+        devices = []
+        
+        # Try PyAudio first
+        if HAS_PYAUDIO:
+            try:
+                p = pyaudio.PyAudio()
+                for i in range(p.get_device_count()):
+                    device_info = p.get_device_info_by_index(i)
+                    if device_info.get('maxInputChannels', 0) > 0:
+                        devices.append(f"{device_info.get('name')} (PyAudio - {i})")
+                p.terminate()
+            except Exception as e:
+                logger.error(f"Error listing PyAudio devices: {e}")
+        
+        # Then try Sounddevice
+        elif HAS_SOUNDDEVICE:
+            try:
+                device_list = sd.query_devices()
+                for i, device in enumerate(device_list):
+                    if device.get('max_input_channels', 0) > 0:
+                        devices.append(f"{device.get('name')} (Sounddevice - {i})")
+            except Exception as e:
+                logger.error(f"Error listing Sounddevice devices: {e}")
+        
+        # If no devices were found
+        if not devices:
+            devices.append("No audio input devices detected")
+            
+        return devices
 
 # Test the module if run directly
 if __name__ == "__main__":

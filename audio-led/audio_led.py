@@ -385,6 +385,22 @@ def run_headless(env_config):
         output_handler = OutputHandler(env_config, hardware_manager)
         output_handler.open()
         
+        # Initialize audio playback if the input is a file
+        audio_player = None
+        if audio_input.input_type == 1:  # INPUT_FILE
+            try:
+                from audio_led.audio.player import AudioPlayer
+                logging.info("Initializing audio playback")
+                audio_player = AudioPlayer(env_config)
+                audio_player.connect_to_input(audio_input)
+                audio_player.start()
+                logging.info("Audio playback started")
+            except ImportError as e:
+                logging.warning(f"Could not import AudioPlayer: {e}")
+                logging.warning("Audio playback not available")
+            except Exception as e:
+                logging.warning(f"Could not start audio playback: {e}")
+        
         # Print instructions
         print("\nAudio LED Visualization running in headless mode")
         print(f"Using input source: {input_source}")
@@ -452,6 +468,13 @@ def run_headless(env_config):
         
         # Clean up
         logging.info("Shutting down headless mode")
+        
+        # Stop audio playback
+        if audio_player:
+            logging.info("Stopping audio playback")
+            audio_player.stop()
+        
+        # Close other resources
         audio_input.close()
         output_handler.close()
         logging.info("Resources cleaned up")
@@ -471,32 +494,39 @@ def main():
         # Parse command line arguments
         args = parse_arguments()
         
+        # Check if we just need to detect devices and exit
+        if args.detect:
+            print("\nAudio LED Visualization System - Device Detection\n")
+            print("Available audio input devices:")
+            try:
+                from audio_led.audio.audio_processor import AudioProcessor
+                devices = AudioProcessor.list_audio_devices()
+                for device in devices:
+                    print(f"  - {device}")
+            except Exception as e:
+                print(f"  Error detecting audio devices: {e}")
+            
+            print("\nAvailable output devices:")
+            try:
+                from audio_led.hardware.device_manager import DeviceManager
+                manager = DeviceManager()
+                manager.detect_devices()
+                if manager.output_devices:
+                    for device in manager.output_devices:
+                        print(f"  - {device}")
+                else:
+                    print("  No output devices detected")
+            except Exception as e:
+                print(f"  Error detecting output devices: {e}")
+            
+            print("\nDetection complete")
+            return
+        
         # Setup the environment based on arguments
         env_config = setup_environment(args)
         
         # Load configuration
         config = env_config['config']
-        
-        # Detect devices if requested
-        if args.detect:
-            from audio_led.audio.audio_processor import AudioProcessor
-            from audio_led.visual.output_handler import OutputHandler
-            
-            print("\n=== Device Detection ===")
-            
-            # Detect audio devices
-            audio_devices = AudioProcessor.list_audio_devices()
-            print("\nAvailable Audio Devices:")
-            for i, device in enumerate(audio_devices):
-                print(f"{i}: {device}")
-            
-            # Detect output devices
-            output_devices = OutputHandler.list_output_methods()
-            print("\nAvailable Output Methods:")
-            for method in output_devices:
-                print(f"- {method}")
-            
-            return
         
         # Check for early termination
         if should_exit:
